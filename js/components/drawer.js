@@ -11,7 +11,7 @@ import { toast } from './toast.js';
 import { esc } from '../core/utils.js';
 import { getDemoPersonas, getDemoPersonaByCode } from '../data/demo-personas.js';
 import { getCurrentUserContext, normalizeRole } from '../core/user-context.js';
-import { ASISTEN_BIBITAN_MAIN_MENUS, ASISTEN_BIBITAN_DATA_MASTER_MENUS } from '../core/menu-registry.js';
+import { ASISTEN_BIBITAN_DATA_MASTER_MENUS } from '../core/menu-registry.js';
 import { isSimulationActive, openSimulationClockModal } from '../core/simulation-clock-service.js';
 
 let drawerEl = null;
@@ -152,22 +152,6 @@ export function openDrawer() {
 
   let navListHtml = '';
   if (isAsistenBibitan) {
-    const mainNavs = ASISTEN_BIBITAN_MAIN_MENUS.map((m) => {
-      const isActive = currentPath === m.route;
-      const iconSvg = m.iconName === 'sprout' ? SVGS.sprout : SVGS.document;
-      return `
-        <button class="drawer-nav-row ${isActive ? 'is-active' : ''}" data-nav-route="${m.route}" type="button">
-          <div class="drawer-row-left">
-            <span class="drawer-row-icon">${iconSvg}</span>
-            <span class="drawer-row-label">${esc(m.label)}</span>
-          </div>
-          <div class="drawer-row-right">
-            ${SVGS.chevron}
-          </div>
-        </button>
-      `;
-    }).join('');
-
     const masterNavs = ASISTEN_BIBITAN_DATA_MASTER_MENUS.map((m) => {
       const isActive = currentPath === m.route;
       return `
@@ -194,8 +178,6 @@ export function openDrawer() {
             ${SVGS.chevron}
           </div>
         </button>
-
-        ${mainNavs}
 
         <div class="drawer-group-header" style="padding: 14px 16px 6px; font-size: 0.72rem; font-weight: 800; color: #64748B; letter-spacing: 0.05em; text-transform: uppercase;">
           DATA MASTER

@@ -39,8 +39,10 @@ export const REQUIREMENT_SOURCE = Object.freeze({
 });
 
 /**
- * Canonical 7 Main Menus for Role ASISTEN_BIBITAN
- * Single Source of Truth for Beranda and Sidebar Renderers.
+ * Canonical 7 Domain Kerja / Modul Operasional untuk Role ASISTEN_BIBITAN.
+ * Catatan: Daftar ini adalah referensi konseptual domain kerja operasional.
+ * Navigasi operasional ASB didistribusikan ke Beranda (Menu Cards) dan Bottom Navigation,
+ * bukan sebagai sumber render menu Sidebar Drawer (drawer ASB dikhususkan untuk Data Master).
  */
 export const ASISTEN_BIBITAN_MAIN_MENUS = Object.freeze([
   {
