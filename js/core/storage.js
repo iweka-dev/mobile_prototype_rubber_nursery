@@ -85,8 +85,16 @@ export const storage = {
   set(key, value) {
     if (typeof localStorage === 'undefined') return;
     const fullKey = PREFIX + key;
+    const notifyChange = (v) => {
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+        try {
+          window.dispatchEvent(new CustomEvent('sigma:storage-update', { detail: { key, value: v } }));
+        } catch (_) {}
+      }
+    };
     try {
       localStorage.setItem(fullKey, JSON.stringify(value));
+      notifyChange(value);
     } catch (err) {
       if (isQuotaError(err)) {
         console.warn(`[storage] LocalStorage quota exceeded writing "${key}". Running compaction...`);
@@ -94,6 +102,7 @@ export const storage = {
         const sanitized = sanitizeLargeMedia(value);
         try {
           localStorage.setItem(fullKey, JSON.stringify(sanitized));
+          notifyChange(sanitized);
           return;
         } catch (err2) {
           if (isQuotaError(err2)) {
@@ -112,6 +121,7 @@ export const storage = {
                 }
               }
               localStorage.setItem(fullKey, JSON.stringify(sanitized));
+              notifyChange(sanitized);
               return;
             } catch (err3) {
               console.error(`[storage] Critical quota exceeded on "${key}":`, err3?.message || err3);
@@ -126,6 +136,11 @@ export const storage = {
   remove(key) {
     if (typeof localStorage === 'undefined') return;
     localStorage.removeItem(PREFIX + key);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+      try {
+        window.dispatchEvent(new CustomEvent('sigma:storage-update', { detail: { key, value: null } }));
+      } catch (_) {}
+    }
   },
   has(key) {
     if (typeof localStorage === 'undefined') return false;

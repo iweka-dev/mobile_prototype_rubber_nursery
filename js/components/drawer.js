@@ -10,7 +10,7 @@ import { navigate, getCurrent } from '../core/router.js';
 import { toast } from './toast.js';
 import { esc } from '../core/utils.js';
 import { getDemoPersonas, getDemoPersonaByCode } from '../data/demo-personas.js';
-import { getCurrentUserContext } from '../core/user-context.js';
+import { getCurrentUserContext, normalizeRole } from '../core/user-context.js';
 import { ASISTEN_BIBITAN_MAIN_MENUS, ASISTEN_BIBITAN_DATA_MASTER_MENUS } from '../core/menu-registry.js';
 import { isSimulationActive, openSimulationClockModal } from '../core/simulation-clock-service.js';
 
@@ -113,6 +113,9 @@ export function openDrawer() {
   const currentPath = (getCurrent().route || '/home');
   const isAsistenBibitan = userCtx?.role === ROLES.ASISTEN_BIBITAN || user?.role === ROLES.ASISTEN_BIBITAN;
   const isMantri = userCtx?.role === ROLES.MANTRI_TANAMAN || user?.role === ROLES.MANTRI_TANAMAN;
+  const normalizedRole = normalizeRole(userCtx?.role || user?.role);
+  const isAskep = normalizedRole === ROLES.ASISTEN_KEPALA || normalizedRole === 'ASKEP';
+  const isPengurus = normalizedRole === ROLES.PENGURUS || normalizedRole === 'PENGURUS_KEBUN_SEPUPU';
   const isSimActive = isSimulationActive();
 
   // Load personas from Master Persona Registry excluding hidden switcher roles (KTU & Tekniker I)
@@ -192,6 +195,8 @@ export function openDrawer() {
           </div>
         </button>
 
+        ${mainNavs}
+
         <div class="drawer-group-header" style="padding: 14px 16px 6px; font-size: 0.72rem; font-weight: 800; color: #64748B; letter-spacing: 0.05em; text-transform: uppercase;">
           DATA MASTER
         </div>
@@ -242,6 +247,18 @@ export function openDrawer() {
             ${SVGS.chevron}
           </div>
         </button>
+
+        ${(isAskep || isPengurus) ? `
+          <button class="drawer-nav-row ${currentPath === '/destruction' ? 'is-active' : ''}" id="menu-pemusnahan-drawer" data-nav-route="/destruction" type="button">
+            <div class="drawer-row-left">
+              <span class="drawer-row-icon">${SVGS.document}</span>
+              <span class="drawer-row-label">Pemusnahan Bibit</span>
+            </div>
+            <div class="drawer-row-right">
+              ${SVGS.chevron}
+            </div>
+          </button>
+        ` : ''}
 
         <button class="drawer-nav-row ${currentPath === '/history' ? 'is-active' : ''}" id="menu-riwayat" data-nav-route="/history" type="button">
           <div class="drawer-row-left">

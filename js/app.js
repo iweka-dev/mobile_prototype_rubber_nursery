@@ -62,7 +62,7 @@ import { renderDispatchReport } from './modules/dispatch/dispatch-report.js';
 import { renderMasterBedengan } from './modules/master/master-bedengan.js';
 import { renderMasterBatch } from './modules/master/master-batch.js';
 import { renderMaterialMaster } from './modules/master/material-master.js';
-import { renderDestructionLanding } from './modules/destruction/destruction-landing.js';
+import { renderDestructionLanding } from './modules/destruction/destruction-landing.js?v=182';
 import { renderConsolidationLanding } from './modules/consolidation/consolidation-landing.js';
 import { renderVerificationLanding } from './modules/verification/verification-landing.js';
 import { renderMantriConfirmationLanding } from './modules/verification/mantri-confirmation-landing.js';

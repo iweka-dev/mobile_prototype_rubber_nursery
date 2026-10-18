@@ -157,6 +157,12 @@ export const MODULE_DOC_CODES = {
   mataEntres: 'REQ/ETRS',
   MATA_ENTRES: 'REQ/ETRS',
   'REQ/ETRS': 'REQ/ETRS',
+  dispatch: 'DSP',
+  DSP: 'DSP',
+  destruction: 'CUL',
+  CUL: 'CUL',
+  mandoranConsolidation: 'CSL',
+  CSL: 'CSL',
   BWGDTL: 'BWGDTL',
   'BWGDTL': 'BWGDTL'
 };
@@ -342,4 +348,181 @@ export function getAttendanceUniqueKey(record) {
     : String(record.workerId || record.workerCode || record.code || record.name || '').trim();
   return `${type}:${idStr}:${date}:${attType}`;
 }
+
+export function parseTxNumericQty(val) {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  let s = String(val).trim();
+  s = s.replace(/[^0-9.,-]/g, '');
+  if (!s) return 0;
+
+  if (s.includes('.') && s.includes(',')) {
+    if (s.indexOf('.') < s.lastIndexOf(',')) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+  } else if (s.includes('.')) {
+    const parts = s.split('.');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = s.replace(/\./g, '');
+    }
+  } else if (s.includes(',')) {
+    const parts = s.split(',');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = s.replace(/,/g, '');
+    } else {
+      s = s.replace(',', '.');
+    }
+  }
+  const parsed = parseFloat(s);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Mendapatkan waktu resmi bisnis dalam zona waktu WIB (Asia/Jakarta, UTC+7).
+ * Menjamin konsistensi tanggal dan penomoran pada batas pergantian bulan.
+ */
+export function getOfficialBusinessTimeWIB(baseDate = new Date()) {
+  const dateObj = typeof baseDate === 'string' || typeof baseDate === 'number' ? new Date(baseDate) : baseDate;
+  if (!dateObj || Number.isNaN(dateObj.getTime())) {
+    throw new Error('Tanggal input tidak valid.');
+  }
+
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+
+  const parts = formatter.formatToParts(dateObj);
+  const partMap = {};
+  for (const p of parts) {
+    partMap[p.type] = p.value;
+  }
+
+  const year = parseInt(partMap.year, 10);
+  const month = parseInt(partMap.month, 10);
+  const day = parseInt(partMap.day, 10);
+  const hour = parseInt(partMap.hour, 10);
+  const minute = parseInt(partMap.minute, 10);
+  const second = parseInt(partMap.second, 10);
+
+  const monthStr = String(month).padStart(2, '0');
+  const dayStr = String(day).padStart(2, '0');
+  const hourStr = String(hour).padStart(2, '0');
+  const minuteStr = String(minute).padStart(2, '0');
+  const secondStr = String(second).padStart(2, '0');
+
+  return {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+    monthStr,
+    dayStr,
+    hourStr,
+    minuteStr,
+    secondStr,
+    formattedDate: `${dayStr}/${monthStr}/${year}`,
+    isoDate: `${year}-${monthStr}-${dayStr}`,
+    isoDateTimeWIB: `${year}-${monthStr}-${dayStr}T${hourStr}:${minuteStr}:${secondStr}+07:00`
+  };
+}
+
+/**
+ * Resolusi visual kode kebun untuk dokumen resmi BAPB (Kamus Resmi: EST-TBS -> TB, EST-APM -> AP)
+ */
+export function resolveBapbEstateDisplayCode(estateId) {
+  if (!estateId) return 'TB';
+  const norm = String(estateId).trim().toUpperCase();
+  if (norm === 'EST-TBS' || norm === 'TBS' || norm === 'TB' || norm.includes('TANAH BESIH') || norm.includes('TANAH-BESIH')) {
+    return 'TB';
+  }
+  if (norm === 'EST-APM' || norm === 'APM' || norm === 'AP' || norm.includes('AEK PANTARA') || norm.includes('AEK-PANTARA')) {
+    return 'AP';
+  }
+  return norm.replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'TB';
+}
+
+/**
+ * Resolusi visual kode divisi untuk dokumen resmi BAPB (Kamus Resmi: DIV-001 -> DIV-I, DIV-002 -> DIV-II, dst.)
+ */
+export function resolveBapbDivisionDisplayCode(divisionId, estateId = '') {
+  if (!divisionId) return 'DIV-I';
+  const norm = String(divisionId).trim().toUpperCase();
+  if (norm === 'DIV-001' || norm === 'DIV-APM-01' || norm === 'DIV-I' || norm.endsWith('-01') || norm.endsWith('-1') || norm === 'DIVISI 1' || norm === 'DIVISI I') {
+    return 'DIV-I';
+  }
+  if (norm === 'DIV-002' || norm === 'DIV-APM-02' || norm === 'DIV-II' || norm.endsWith('-02') || norm.endsWith('-2') || norm === 'DIVISI 2' || norm === 'DIVISI II') {
+    return 'DIV-II';
+  }
+  if (norm === 'DIV-003' || norm === 'DIV-APM-03' || norm === 'DIV-III' || norm.endsWith('-03') || norm.endsWith('-3') || norm === 'DIVISI 3' || norm === 'DIVISI III') {
+    return 'DIV-III';
+  }
+  if (norm.startsWith('DIV-')) {
+    return norm;
+  }
+  return `DIV-${norm}`;
+}
+
+/**
+ * Format nomor resmi BAPB: [KODE_KEBUN]/[KODE_DIVISI]/[BULAN]/[TAHUN]/[NOMOR_URUT]
+ * Contoh: TB/DIV-I/10/2026/01
+ */
+export function formatBapbOfficialDocNo(estateDisplayCode, divisionDisplayCode, month, year, sequenceNumber) {
+  const seqStr = String(sequenceNumber).padStart(2, '0');
+  const monthStr = String(month).padStart(2, '0');
+  return `${estateDisplayCode}/${divisionDisplayCode}/${monthStr}/${year}/${seqStr}`;
+}
+
+/**
+ * Parser kuantitas kanonikal ketat (Strict Canonical Quantity Parser).
+ * Menolak string kosong, nol, negatif, pecahan/desimal, format ambigu (12abc), NaN, Infinity, dan luar batas integer aman.
+ * Mencegah fallback truthiness liar.
+ */
+export function parseStrictCanonicalQuantity(rawInput, fieldName = 'Kuantitas') {
+  if (rawInput === null || rawInput === undefined) {
+    throw new Error(`${fieldName} tidak boleh kosong.`);
+  }
+
+  if (typeof rawInput === 'number') {
+    if (!Number.isFinite(rawInput) || Number.isNaN(rawInput)) {
+      throw new Error(`${fieldName} harus berupa angka valid.`);
+    }
+    if (!Number.isSafeInteger(rawInput)) {
+      throw new Error(`${fieldName} berada di luar batas integer aman.`);
+    }
+    if (rawInput <= 0) {
+      throw new Error(`${fieldName} harus merupakan bilangan bulat positif lebih besar dari 0.`);
+    }
+    return rawInput;
+  }
+
+  if (typeof rawInput === 'string') {
+    const trimmed = rawInput.trim();
+    if (!trimmed) {
+      throw new Error(`${fieldName} tidak boleh kosong.`);
+    }
+    if (!/^[1-9]\d*$/.test(trimmed)) {
+      throw new Error(`${fieldName} tidak valid (${rawInput}). Harus berupa bilangan bulat positif tanpa desimal atau karakter tambahan.`);
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isSafeInteger(parsed)) {
+      throw new Error(`${fieldName} berada di luar batas integer aman.`);
+    }
+    return parsed;
+  }
+
+  throw new Error(`${fieldName} memiliki tipe data tidak valid.`);
+}
+
+
 

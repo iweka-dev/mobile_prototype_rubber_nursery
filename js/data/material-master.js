@@ -122,6 +122,18 @@ export function calculateIssueItemUsedQuantity(doc, item, docItemCount = 1, excl
     }
   });
 
+  // 3. Konsumsi dari material_usage_transactions (pencatatan material mandor / manual)
+  const manualTxs = storage.get('material_usage_transactions', []) || [];
+  manualTxs.forEach(tx => {
+    if (excludeTxDocNo && (tx.docNo === excludeTxDocNo || tx.id === excludeTxDocNo)) return;
+    if (isTransactionMatchingIssueItem(tx, doc, item, docItemCount)) {
+      const q = Number(tx.quantity !== undefined ? tx.quantity : (tx.qty !== undefined ? tx.qty : 0));
+      if (!isNaN(q) && q > 0) {
+        usedQty += q;
+      }
+    }
+  });
+
   return usedQty;
 }
 

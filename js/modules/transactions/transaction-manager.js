@@ -166,8 +166,30 @@ let searchQuery = '';
 export function parseTxNumericQty(val) {
   if (typeof val === 'number') return isNaN(val) ? 0 : val;
   if (!val) return 0;
-  const cleaned = String(val).replace(/[^0-9.-]+/g, '');
-  const parsed = parseFloat(cleaned);
+  let s = String(val).trim();
+  s = s.replace(/[^0-9.,-]/g, '');
+  if (!s) return 0;
+
+  if (s.includes('.') && s.includes(',')) {
+    if (s.indexOf('.') < s.lastIndexOf(',')) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+  } else if (s.includes('.')) {
+    const parts = s.split('.');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = s.replace(/\./g, '');
+    }
+  } else if (s.includes(',')) {
+    const parts = s.split(',');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = s.replace(/,/g, '');
+    } else {
+      s = s.replace(',', '.');
+    }
+  }
+  const parsed = parseFloat(s);
   return isNaN(parsed) ? 0 : parsed;
 }
 

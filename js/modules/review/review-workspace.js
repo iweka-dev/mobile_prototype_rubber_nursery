@@ -30,6 +30,13 @@ import { renderProcessMappingPortal } from '../process-mapping/process-mapping-u
 import { renderInfoCenterPortal } from '../info-center/info-center-ui.js';
 import { cleanAllTransactionalData } from '../../core/storage-registry.js';
 import { setWorkspaceViewMode } from '../../core/workspace-view.js';
+import {
+  initMaterialMasterStorage,
+  getAllIssueDocuments,
+  getIssueUsageTransactions,
+  getIssueByNoIssue,
+  getUnifiedMaterialRecords
+} from '../../data/material-master.js';
 
 const STORAGE_KEY = 'sigma_feedback_notes';
 const API_URL = '/api/notes';
@@ -77,6 +84,7 @@ export const CANONICAL_PAGE_MAP = Object.freeze({
   '/material': 'Material & Bahan',
   '/nursery-activity': 'Rekam Pemeliharaan',
   '/nursery-activity/form': 'Form Rekam Pemeliharaan',
+  '/nursery-activity/consolidation': 'Konsolidasi Hasil Mandoran',
   '/request': 'Permintaan Bibit',
   '/request/kebun-sepupu': 'Permintaan Kebun Sepupu',
   '/request/kebun-sepupu/form': 'Form Permintaan Kebun Sepupu',
@@ -441,8 +449,11 @@ let activeWorkspaceTab = 'notes'; // 'notes' | 'flow' | 'transactions' | 'proces
 let activeTxTab = 'reception'; // 'attendance' | 'reception' | 'seeding' | 'budding' | 'inspection' | 'regrafting' | 'selection' | 'syncQueue'
 let txSearchQuery = '';
 let txStatusFilter = 'ALL';
+let txActivityModeFilter = 'ALL'; // 'ALL' | 'HARIAN' | 'MANDORAN'
+let txActivityViewMode = 'DOC'; // 'DOC' (per dokumen) | 'WORKER' (per alokasi per pekerja)
+let txConsolidationViewMode = 'DOC'; // 'DOC' (per alokasi kegiatan) | 'WORKER' (per alokasi per pekerja)
 
-const TX_MODULES = {
+export const TX_MODULES = {
   attendance: {
     id: 'attendance',
     title: 'Presensi',
@@ -475,6 +486,17 @@ const TX_MODULES = {
     repo: seedingRepository,
     qtyField: 'totalDisemai',
     unit: 'Pkk'
+  },
+  dederan: {
+    id: 'dederan',
+    title: 'Dederan',
+    subtitle: 'Penanaman Benih ke Bedengan Deder',
+    icon: 'dederan',
+    route: '/seeding/dederan/form',
+    storageKey: 'dederan_transactions',
+    repo: null,
+    qtyField: 'jumlahDeder',
+    unit: 'Butir'
   },
   budding: {
     id: 'budding',
@@ -534,7 +556,7 @@ const TX_MODULES = {
   nurseryActivity: {
     id: 'nurseryActivity',
     title: 'Rekam Pemeliharaan',
-    subtitle: 'Pemupukan, Penyemprotan & Rawat',
+    subtitle: 'Aktivitas Harian & Mandoran per Pekerja',
     icon: 'nurseryActivity',
     route: '/nursery-activity',
     storageKey: 'nursery_activity_records',
@@ -542,27 +564,60 @@ const TX_MODULES = {
     qtyField: 'volumePkk',
     unit: 'Pkk'
   },
-  material: {
-    id: 'material',
-    title: 'Material & Logistik',
-    subtitle: 'Stok Pupuk, Polibag & Kimia',
-    icon: 'material',
-    route: '/material',
-    storageKey: 'materials_transactions',
-    repo: warehouseStockRepository,
-    qtyField: 'currentStock',
-    unit: 'Unit'
+  mandoranConsolidation: {
+    id: 'mandoranConsolidation',
+    title: 'Konsolidasi Mandoran',
+    subtitle: 'Konfirmasi Konsolidasi Hasil Mandoran',
+    icon: 'mandoranConsolidation',
+    route: '/nursery-activity/consolidation',
+    storageKey: 'nursery_mandoran_consolidations',
+    repo: null,
+    qtyField: 'totalHasil',
+    unit: 'Pkk'
   },
   request: {
     id: 'request',
-    title: 'Pengeluaran Bibit',
-    subtitle: 'Permintaan & Dispatch Bibit',
+    title: 'Permintaan Bibit',
+    subtitle: 'SPB & Permintaan Bibit Keluar',
     icon: 'request',
     route: '/request',
     storageKey: 'requests_transactions',
     repo: requestRepository,
-    qtyField: 'qtyDispatched',
+    qtyField: 'qtyRequested',
     unit: 'Pkk'
+  },
+  dispatch: {
+    id: 'dispatch',
+    title: 'Pengiriman Bibit',
+    subtitle: 'Surat Jalan & Dispatch Bibit',
+    icon: 'dispatch',
+    route: '/dispatch',
+    storageKey: 'dispatch_transactions',
+    repo: null,
+    qtyField: 'qtyKirim',
+    unit: 'Pkk'
+  },
+  destruction: {
+    id: 'destruction',
+    title: 'Pemusnahan Bibit',
+    subtitle: 'Berita Acara Pemusnahan Afkir',
+    icon: 'destruction',
+    route: '/destruction',
+    storageKey: 'destruction_transactions',
+    repo: null,
+    qtyField: 'qty',
+    unit: 'Pkk'
+  },
+  material: {
+    id: 'material',
+    title: 'Material & Logistik',
+    subtitle: 'Dokumen Issue & Alokasi Gudang',
+    icon: 'material',
+    route: '/material',
+    storageKey: 'issue_documents',
+    repo: null,
+    qtyField: 'quantityIssue',
+    unit: 'Unit'
   },
   syncQueue: {
     id: 'syncQueue',
@@ -586,6 +641,8 @@ function getTxModuleIconSvg(modId, size = 16) {
       return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg>`;
     case 'seeding':
       return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10a6 6 0 0 0-6-6H3v2a6 6 0 0 0 6 6h3Z"></path><path d="M12 22V10"></path><path d="M12 8a5 5 0 0 1 5-5h3v2a5 5 0 0 1-5 5h-3Z"></path></svg>`;
+    case 'dederan':
+      return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M7 20h10"></path><path d="M10 20c0-4 2-7 2-10"></path><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7 1.5-1.1 2.2-2.4 2.2-4.1 0-2-1.5-3.5-3.5-3.5-1 0-2 .5-2.5 1.5"></path></svg>`;
     case 'budding':
       return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"></path><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"></path></svg>`;
     case 'inspection':
@@ -598,10 +655,16 @@ function getTxModuleIconSvg(modId, size = 16) {
       return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v12"></path><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>`;
     case 'nurseryActivity':
       return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>`;
+    case 'mandoranConsolidation':
+      return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="m9 14 2 2 4-4"></path></svg>`;
     case 'material':
       return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="2" y="2" rx="1"></rect><rect width="8" height="8" x="14" y="2" rx="1"></rect><rect width="8" height="8" x="2" y="14" rx="1"></rect><rect width="8" height="8" x="14" y="14" rx="1"></rect></svg>`;
     case 'request':
       return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"></path><path d="M15 18H9"></path><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"></path><circle cx="17" cy="18" r="2"></circle><circle cx="7" cy="18" r="2"></circle></svg>`;
+    case 'dispatch':
+      return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>`;
+    case 'destruction':
+      return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
     case 'syncQueue':
       return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>`;
     default:
@@ -609,7 +672,51 @@ function getTxModuleIconSvg(modId, size = 16) {
   }
 }
 
-function loadTxList(modId) {
+/**
+ * Resolver identitas pencatat / pembuat transaksi (Created By).
+ * Menyelaraskan nama pencatat dan peran aktif (Mantri Bibitan sebagai default persona operasional,
+ * atau peran aktif di session jika tersedia).
+ */
+export function resolveTxCreatorInfo(item = null) {
+  let activeUser = null;
+  try {
+    activeUser = (typeof session !== 'undefined' && typeof session.get === 'function') ? session.get() : null;
+  } catch (e) {
+    activeUser = null;
+  }
+  const activeName = activeUser?.name || null;
+  const activeRoleName = activeUser?.position || (activeUser?.role ? (ROLE_LABELS[activeUser.role] || activeUser.role) : null) || 'Mantri Bibitan';
+
+  let name = item?.createdByName || item?.actorName || item?.author;
+  let role = item?.createdByPosition || item?.createdByRoleName || (item?.createdByRole ? (ROLE_LABELS[item.createdByRole] || item.createdByRole) : null);
+
+  if (!name && item?.createdBy) {
+    if (typeof item.createdBy === 'string' && item.createdBy.includes('(')) {
+      const match = item.createdBy.match(/^(.*?)\s*\((.*?)\)$/);
+      if (match) {
+        name = match[1].trim();
+        if (!role) role = match[2].trim();
+      } else {
+        name = item.createdBy;
+      }
+    } else {
+      name = item.createdBy;
+    }
+  }
+
+  // Jika nama belum ada, fallback ke active user / mandor / Wagiman
+  name = name || activeName || item?.mandor || 'Wagiman';
+  // Jika role belum ada, fallback ke active role / Mantri Bibitan
+  role = role || activeRoleName || 'Mantri Bibitan';
+
+  return {
+    name,
+    role,
+    display: `${name} (${role})`
+  };
+}
+
+export function loadTxList(modId) {
   const cfg = TX_MODULES[modId];
   if (!cfg) return [];
   if (modId === 'attendance') {
@@ -691,17 +798,394 @@ function loadTxList(modId) {
     ];
     return combined;
   }
-  if (modId === 'nurseryActivity') {
-    const items = storage.get('nursery_activity_records', []);
-    return items || [];
+  if (modId === 'dederan') {
+    const items = storage.get('dederan_transactions', []);
+    const indukDocs = storage.get('dederan_induk_documents', []);
+    return (items || []).map((it, idx) => {
+      const parent = indukDocs.find((d) => d.docNo === it.parentDederIndukDocNo || d.id === it.parentDederIndukDocNo || d.sourceReceiptDocNo === it.sourceReceiptDocNo);
+      return {
+        ...it,
+        docNo: it.docNo || formatStandardDocNo(2026, 'DED', idx + 1),
+        parentDocNo: it.parentDederIndukDocNo || it.sourceReceiptDocNo || parent?.docNo || '-',
+        tanggal: it.tanggalDeder || it.tanggal || it.date || todayISO(),
+        bedengan: it.bedenganCode || it.bedenganName || it.bedengan || 'Bedengan 01',
+        klon: it.klon || parent?.klon || 'GT 1',
+        jumlahDeder: parseTxNumericQty(it.jumlahDeder !== undefined ? it.jumlahDeder : (it.qty || 0)),
+        createdBy: it.createdBy || it.actorName || 'Wagiman',
+        status: it.status || it.verificationStatus || 'MENUNGGU_VERIFIKASI'
+      };
+    });
   }
-  if (modId === 'material') {
-    const items = storage.get('materials_transactions', []);
-    return items || [];
+  if (modId === 'dispatch') {
+    const items = storage.get('dispatch_transactions', []);
+    return (items || []).map((it, idx) => ({
+      ...it,
+      docNo: it.docNo || it.dispatchNo || formatStandardDocNo(2026, 'DSP', idx + 1),
+      parentRequestDocNo: it.parentRequestDocNo || it.requestDocNo || it.spbNo || '-',
+      tanggal: it.issuedDate || it.tanggal || it.date || (it.createdAt ? it.createdAt.slice(0, 10) : todayISO()),
+      targetDivision: it.targetDivisionName || it.targetDivision || it.targetEstateId || it.tujuan || 'Divisi II',
+      klon: it.clone || it.klon || 'PB 260',
+      qtyKirim: parseTxNumericQty(it.issuedQty !== undefined ? it.issuedQty : (it.shipmentQty !== undefined ? it.shipmentQty : (it.qty || 0))),
+      vehiclePlate: it.vehiclePlate || it.nopol || it.driverName || '-',
+      issuedByName: it.issuedByName || it.petugas || it.createdByName || 'Mantri Bibitan',
+      status: it.status || 'COMPLETED'
+    }));
+  }
+  if (modId === 'destruction') {
+    const rawItems = storage.get('destruction_transactions', null);
+    const items = Array.isArray(rawItems) ? rawItems : [];
+    return items.map((it, idx) => {
+      const isBapb = it.documentType === 'BAPB_KARET' || Boolean(it.bapbStatus) || Boolean(it.signatures);
+      const subItems = Array.isArray(it.items) && it.items.length > 0 ? it.items : null;
+      
+      const docNo = it.officialDocNo || it.docNo || it.draftDocNo || it.destructionNo || it.baNo || formatStandardDocNo(2026, 'CUL', idx + 1);
+      const tanggal = it.tanggalPelaksanaan || it.tanggalPemusnahan || it.destructionDate || it.tanggal || it.date || (it.createdAt ? it.createdAt.slice(0, 10) : todayISO());
+      
+      let sourceSelectionNo = it.sourceSelectionNo || it.batchCode || it.sourceSelectionId || '-';
+      let bedengan = it.bedenganCode || it.bedengan || 'Bedengan 01';
+      let klon = it.klon || 'GT 1';
+      let qty = parseTxNumericQty(it.totalQty !== undefined ? it.totalQty : (it.destructionQty !== undefined ? it.destructionQty : (it.quantity !== undefined ? it.quantity : (it.qty || 0))));
+
+      if (subItems) {
+        sourceSelectionNo = [...new Set(subItems.map(s => s.sourceSelectionNo || s.sourceSelectionId).filter(Boolean))].join(', ') || sourceSelectionNo;
+        bedengan = [...new Set(subItems.map(s => s.bedengan || s.bedenganCode).filter(Boolean))].join(', ') || bedengan;
+        klon = [...new Set(subItems.map(s => s.klon || s.clone).filter(Boolean))].join(', ') || klon;
+      }
+
+      return {
+        ...it,
+        docNo,
+        tanggal,
+        sourceSelectionNo,
+        bedengan,
+        klon,
+        qty,
+        reason: it.reason || it.alasan || 'AFKIR',
+        createdByName: it.signatures?.asb?.name || it.createdByName || it.petugas || 'Asisten Bibitan',
+        status: it.bapbStatus || it.status || 'MENUNGGU_VERIFIKASI',
+        isBapb
+      };
+    });
+  }
+  if (modId === 'nurseryActivity') {
+    let items = storage.get('nursery_activity_records', []);
+    if (!items || items.length === 0) {
+      items = [
+        {
+          id: 'ACT-2026-001',
+          docNo: 'ACT/NUR/2026/001',
+          activityEntryMode: 'HARIAN',
+          tanggal: '2026-10-16',
+          aktivitas: { id: 'AKT-01', kode: 'A01-01', nama: 'Pemupukan NPK 15-15-15 (Bibitan Utama)' },
+          allocationCode: 'A01-01',
+          allocationName: 'Pemupukan NPK 15-15-15 (Bibitan Utama)',
+          program: 'PRG/NUR/01/2026',
+          programCode: 'PRG/NUR/01/2026',
+          tahapan: 'Main Nursery',
+          bedengan: 'Bedengan MN-01 s/d MN-04',
+          lokasiBlok: { blok: 'Blok A - MN 01', luas: 2.5, jumlahPokok: 1200 },
+          volumePkk: 1200,
+          uom: 'Pkk',
+          pekerja: [
+            { id: 'W-01', workerId: 'W-01', code: 'P001', name: 'Sutrisno', position: 'Pekerja Bibitan', role: 'Pekerja Harian', statusKerja: 'Hadir Penuh' },
+            { id: 'W-02', workerId: 'W-02', code: 'P002', name: 'Joko Susanto', position: 'Pekerja Bibitan', role: 'Pekerja Harian', statusKerja: 'Hadir Penuh' },
+            { id: 'W-03', workerId: 'W-03', code: 'P003', name: 'Budi Santoso', position: 'Pekerja Bibitan', role: 'Pekerja Harian', statusKerja: 'Hadir Penuh' }
+          ],
+          mandor: 'Wagiman',
+          createdByName: 'Wagiman',
+          status: 'VERIFIED'
+        },
+        {
+          id: 'ACT-2026-002',
+          docNo: 'ACT/NUR/2026/002',
+          activityEntryMode: 'MANDORAN',
+          tanggal: '2026-10-17',
+          aktivitas: { id: 'AKT-02', kode: 'RAW-01', nama: 'Penyiangan Gulma Bedengan Polybag' },
+          allocationCode: 'RAW-01',
+          allocationName: 'Penyiangan Gulma Bedengan Polybag',
+          workGroupRoleCode: 'BORONGAN-RAWAT',
+          workGroupRoleName: 'Pekerja Borongan Rawat',
+          taskQuantity: 500,
+          uom: 'Pkk',
+          program: 'PRG/NUR/01/2026',
+          programCode: 'PRG/NUR/01/2026',
+          tahapan: 'Main Nursery',
+          bedengan: 'Bedengan MN-05 s/d MN-08',
+          lokasiBlok: { blok: 'Blok B - MN 02', luas: 3.0, jumlahPokok: 1800 },
+          pekerja: [
+            { id: 'W-04', workerId: 'W-04', code: 'P004', name: 'Rahmat Hidayat', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 500, inputHasil: 600, resultType: 'TUNTAS', selisihBasis: '+100 Pkk' },
+            { id: 'W-05', workerId: 'W-05', code: 'P005', name: 'Surono', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 500, inputHasil: 550, resultType: 'TUNTAS', selisihBasis: '+50 Pkk' },
+            { id: 'W-06', workerId: 'W-06', code: 'P006', name: 'Agus Priyanto', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 500, inputHasil: 520, resultType: 'TUNTAS', selisihBasis: '+20 Pkk' }
+          ],
+          volumePkk: 1670,
+          totalHasil: 1670,
+          mandor: 'Wagiman',
+          createdByName: 'Wagiman',
+          status: 'CONSOLIDATED'
+        },
+        {
+          id: 'ACT-2026-003',
+          docNo: 'ACT/NUR/2026/003',
+          activityEntryMode: 'MANDORAN',
+          tanggal: '2026-10-17',
+          aktivitas: { id: 'AKT-03', kode: 'RAW-03', nama: 'Penyiraman Bibitan Polybag' },
+          allocationCode: 'RAW-03',
+          allocationName: 'Penyiraman Bibitan Polybag',
+          workGroupRoleCode: 'BORONGAN-RAWAT',
+          workGroupRoleName: 'Pekerja Borongan Rawat',
+          taskQuantity: 400,
+          uom: 'Pkk',
+          program: 'PRG/NUR/01/2026',
+          programCode: 'PRG/NUR/01/2026',
+          tahapan: 'Main Nursery',
+          bedengan: 'Bedengan MN-09 s/d MN-12',
+          lokasiBlok: { blok: 'Blok C - MN 03', luas: 2.0, jumlahPokok: 850 },
+          pekerja: [
+            { id: 'W-07', workerId: 'W-07', code: 'P007', name: 'Hadi Gunawan', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 400, inputHasil: 450, resultType: 'TUNTAS', selisihBasis: '+50 Pkk' },
+            { id: 'W-08', workerId: 'W-08', code: 'P008', name: 'Tri Prasetyo', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 400, inputHasil: 400, resultType: 'TUNTAS', selisihBasis: '0 Pkk' }
+          ],
+          volumePkk: 850,
+          totalHasil: 850,
+          mandor: 'Supriono',
+          createdByName: 'Supriono',
+          status: 'VERIFIED'
+        }
+      ];
+      storage.set('nursery_activity_records', items);
+    }
+    return (items || []).map((it, idx) => {
+      const isMandoran = (it.activityEntryMode === 'MANDORAN') || !!it.workGroupRoleCode;
+      const mode = isMandoran ? 'MANDORAN' : 'HARIAN';
+      const aktNama = typeof it.aktivitas === 'object' ? (it.aktivitas?.nama || it.aktivitas?.title) : (it.aktivitas || it.activityType || it.jenisKegiatan || (isMandoran ? 'Pemeliharaan Mandoran' : 'Pemupukan Rutin'));
+      const pekerjaList = Array.isArray(it.pekerja) ? it.pekerja : [];
+      const mandorName = it.actorName || it.createdByName || it.mandor || it.supervisor || (pekerjaList[0]?.name || pekerjaList[0]?.workerName) || 'Wagiman';
+      const taskQty = Number(it.taskQuantity || 0);
+      const totalWorkerHasil = pekerjaList.reduce((s, w) => s + (Number(w.inputHasil) || 0), 0);
+      const vol = isMandoran
+        ? (totalWorkerHasil || taskQty * (pekerjaList.length || 1) || Number(it.volumePkk || 0))
+        : (it.volumePkk !== undefined ? Number(it.volumePkk) : (it.taskQuantity !== undefined ? Number(it.taskQuantity) : (totalWorkerHasil || Number(it.qty || 0))));
+      
+      const allocationCode = it.allocationCode || (typeof it.aktivitas === 'object' ? it.aktivitas?.kode : '-') || '-';
+      const allocationName = it.allocationName || aktNama;
+      const alokasi = (allocationCode !== '-' && allocationName !== '-') ? `${allocationCode} — ${allocationName}` : (allocationName || allocationCode);
+      const uom = it.uom || it.uomCode || 'Pkk';
+
+      return {
+        ...it,
+        docNo: it.docNo || it.id || `ACT/NUR/2026/0${idx + 1}`,
+        tanggal: it.tanggal || it.date || (it.createdAt ? it.createdAt.slice(0, 10) : todayISO()),
+        activityType: aktNama,
+        activityEntryMode: mode,
+        entryMode: mode,
+        isMandoran,
+        allocationCode,
+        allocationName,
+        alokasi,
+        workGroupRoleCode: it.workGroupRoleCode || it.roleCode || (isMandoran ? 'BORONGAN-RAWAT' : 'CFNA'),
+        workGroupRoleName: it.workGroupRoleName || (isMandoran ? 'Pekerja Borongan Rawat' : 'Pekerja Harian'),
+        taskQuantity: taskQty,
+        uom,
+        unit: uom,
+        tahapan: it.tahapan || it.program || it.programCode || 'Main Nursery',
+        bedengan: it.bedengan || (typeof it.lokasiBlok === 'object' ? it.lokasiBlok?.blok : null) || 'Bedengan 01',
+        materialName: it.materialName || it.taskItemName || it.allocationCode || (it.isMaterial ? 'Material Nursery' : 'Jasa / Tenaga'),
+        pekerja: pekerjaList,
+        workerCount: pekerjaList.length,
+        volumePkk: parseTxNumericQty(vol),
+        totalHasil: parseTxNumericQty(totalWorkerHasil || vol),
+        mandor: mandorName,
+        createdByName: resolveTxCreatorInfo(it).name,
+        createdByRole: resolveTxCreatorInfo(it).role,
+        createdBy: resolveTxCreatorInfo(it).display,
+        status: it.status || (it.mandoranConsolidationId ? 'CONSOLIDATED' : (it.verificationStatus || 'VERIFIED'))
+      };
+    });
   }
   if (modId === 'request') {
-    const items = storage.get('requests_transactions', storage.get('requests', []));
-    return items || [];
+    const txs = storage.get('requests_transactions', storage.get('requests', [])) || [];
+    return (txs || []).map((it, idx) => {
+      const distItems = Array.isArray(it.distributionItems) ? it.distributionItems : [];
+      const klonVal = it.klon || it.approvedClone || it.requestedClone || (distItems[0]?.klon) || 'PB 260';
+      const tahapanVal = it.growthStage || it.tahapan || (distItems[0]?.growthStage || distItems[0]?.tahapan) || 'Rubber Main Nursery';
+      const targetVal = it.targetEstateName || it.targetDivision || it.estateTujuan || it.targetDivisionName || 'Divisi II - Replanting 2026';
+      const reqQty = it.requestedQty !== undefined ? it.requestedQty : (it.qtyRequested !== undefined ? it.qtyRequested : (it.qty !== undefined ? it.qty : (distItems.reduce((s, d) => s + (Number(d.qty) || 0), 0) || 0)));
+      const dispQty = it.qtyDispatched !== undefined ? it.qtyDispatched : (it.dispatchedQty !== undefined ? it.dispatchedQty : (it.jumlahBatangDikeluarkan !== undefined ? it.jumlahBatangDikeluarkan : (it.status === 'COMPLETED' ? reqQty : 0)));
+      return {
+        ...it,
+        docNo: it.docNo || it.spbNo || it.requestId || it.id || formatStandardDocNo(2026, 'REQ', idx + 1),
+        tanggal: it.requiredDate || it.tanggal || it.date || (it.createdAt ? it.createdAt.slice(0, 10) : todayISO()),
+        requestType: it.requestType || it.tipePermintaan || (it.targetEstateName ? 'Kebun Sepupu' : (it.distributionItems ? 'Kebun Sendiri' : 'Permintaan Bibit')),
+        targetDivision: targetVal,
+        tahapan: tahapanVal,
+        klon: klonVal,
+        qtyRequested: parseTxNumericQty(reqQty),
+        qtyDispatched: parseTxNumericQty(dispQty),
+        status: it.status || 'APPROVED'
+      };
+    });
+  }
+  if (modId === 'reception') {
+    const directReceipts = storage.get('receipt_transactions', []) || [];
+    const kspReceipts = storage.get('receipt_ksp_transactions', []) || [];
+    const map = new Map();
+    directReceipts.forEach((it) => {
+      const doc = it.docNo || it.nomorDokumen || it.id;
+      map.set(doc, it);
+    });
+    kspReceipts.forEach((it) => {
+      const doc = it.docNo || it.receiptDocNo || it.nomorDokumen || it.id;
+      if (!map.has(doc)) {
+        map.set(doc, {
+          ...it,
+          id: it.id || doc,
+          docNo: doc,
+          nomorDokumen: it.nomorDokumen || doc,
+          tanggal: it.tanggal || it.date || todayISO(),
+          tahapan: it.tahapan || it.tahapanPertumbuhan || 'Rubber Main Nursery',
+          klon: it.klon || 'PB 260',
+          sumber: it.sumber || it.asalKebun || it.rekanan || 'Kebun Sepupu',
+          qty: it.jumlahBenih || it.qty || it.volume || 0,
+          status: it.status || 'APPROVED'
+        });
+      }
+    });
+    return Array.from(map.values());
+  }
+  if (modId === 'material') {
+    initMaterialMasterStorage();
+    const docs = getAllIssueDocuments();
+    return (docs || []).map((doc, idx) => {
+      const item = doc.items?.[0] || {};
+      const itemCode = item.itemCode || doc.itemCode || '-';
+      const itemName = item.itemName || doc.itemName || 'Material';
+      const uom = item.uom || doc.uom || 'Unit';
+      const quantityIssue = Number(item.quantityIssue !== undefined ? item.quantityIssue : doc.quantityIssue) || 0;
+      const usedQuantity = Number(item.usedQuantity !== undefined ? item.usedQuantity : doc.usedQuantity) || 0;
+      const remainingQuantity = Number(item.remainingQuantity !== undefined ? item.remainingQuantity : doc.remainingQuantity) || 0;
+      const alokasi = (doc.kodeAlokasi && doc.namaAlokasi) ? `${doc.kodeAlokasi} — ${doc.namaAlokasi}` : (doc.kodeAlokasi || doc.namaAlokasi || '-');
+
+      return {
+        ...doc,
+        id: doc.id || doc.noIssue || `ISS-${idx + 1}`,
+        docNo: doc.noIssue || doc.id || `ISS-${idx + 1}`,
+        noIssue: doc.noIssue || doc.id || `ISS-${idx + 1}`,
+        itemCode,
+        itemName,
+        uom,
+        alokasi,
+        kodeAlokasi: doc.kodeAlokasi || '-',
+        namaAlokasi: doc.namaAlokasi || '-',
+        quantityIssue,
+        usedQuantity,
+        remainingQuantity,
+        tanggal: doc.tanggal || todayISO(),
+        status: doc.status || 'AVAILABLE',
+        items: doc.items || []
+      };
+    });
+  }
+  if (modId === 'mandoranConsolidation') {
+    const rawItems = storage.get('nursery_mandoran_consolidations', []) || [];
+    const result = [];
+    rawItems.forEach((item, docIdx) => {
+      const docNo = item.docNo || item.id || formatStandardDocNo(2026, 'CSL', docIdx + 1);
+      const rawDate = item.createdAt ? item.createdAt.slice(0, 10) : (item.date || item.tanggal || todayISO());
+      const groups = Array.isArray(item.groups) ? item.groups : [];
+      const mandorName = item.actor?.name || item.createdByName || item.mandor || 'Wagiman';
+      const sourceCount = Array.isArray(item.sourceTransactionIds) ? item.sourceTransactionIds.length : (item.sourceCount || 0);
+
+      if (groups.length > 0) {
+        // Tampilkan per Alokasi Kegiatan secara presisi dengan UOM & volume akurat masing-masing
+        groups.forEach((g, gIdx) => {
+          const wList = Array.isArray(g.workers) ? g.workers : [];
+          const groupTotalHasil = wList.reduce((s, w) => s + (Number(w.inputHasil !== undefined ? w.inputHasil : (w.total || w.hasil || 0)) || 0), 0);
+          const allocationCode = g.allocationCode || '-';
+          const allocationName = g.allocationName || g.workGroupRoleName || 'Pemeliharaan Bibitan';
+          const alokasi = (allocationCode !== '-' && allocationName !== '-') ? `${allocationCode} — ${allocationName}` : (allocationName || allocationCode);
+          const roleName = g.workGroupRoleName || g.roleName || 'Pekerja Bibitan';
+          const uom = g.uom || item.uom || 'Pkk';
+
+          result.push({
+            ...item,
+            id: `${item.id || docNo}__grp_${gIdx}`,
+            rawConsolidationId: item.id || docNo,
+            docNo,
+            groupIndex: gIdx,
+            totalGroupsInDoc: groups.length,
+            tanggal: rawDate,
+            date: rawDate,
+            allocationCode,
+            allocationName,
+            alokasi,
+            workGroupRoleCode: g.workGroupRoleCode || g.roleCode || item.workGroupRoleCode || item.roleCode || 'PEKERJA_BIBITAN',
+            workGroupRoleName: roleName,
+            roleCode: g.workGroupRoleCode || g.roleCode || item.workGroupRoleCode || item.roleCode || 'PEKERJA_BIBITAN',
+            roleName,
+            taskQuantity: Number(g.taskQuantity || 0),
+            workerCount: wList.length,
+            totalHasil: groupTotalHasil,
+            uom,
+            unit: uom,
+            workers: wList,
+            pekerja: wList,
+            group: g,
+            groups: item.groups,
+            mandor: mandorName,
+            createdByName: resolveTxCreatorInfo(item).name,
+            createdByRole: resolveTxCreatorInfo(item).role,
+            createdBy: resolveTxCreatorInfo(item).display,
+            sourceCount: Math.min(sourceCount, wList.reduce((s, w) => s + (w.sourceTransactionIds ? w.sourceTransactionIds.length : 0), 0) || sourceCount),
+            sourceTransactionIds: item.sourceTransactionIds || [],
+            status: item.status || 'CONSOLIDATED'
+          });
+        });
+      } else {
+        const wList = Array.isArray(item.workers) ? item.workers : (Array.isArray(item.pekerja) ? item.pekerja : []);
+        const totalHasil = wList.length > 0
+          ? wList.reduce((s, w) => s + (Number(w.inputHasil !== undefined ? w.inputHasil : (w.total || w.hasil || 0)) || 0), 0)
+          : Number(item.totalHasil || item.qty || 0);
+        let allocationCode = item.allocationCode || '-';
+        let allocationName = item.allocationName || item.alokasi || 'Pemeliharaan Bibitan';
+        if ((!allocationCode || allocationCode === '-') && item.alokasi && item.alokasi.includes(' — ')) {
+          const parts = item.alokasi.split(' — ');
+          allocationCode = parts[0].trim();
+          allocationName = parts[1].trim();
+        }
+        const alokasi = (allocationCode !== '-' && allocationName !== '-') ? `${allocationCode} — ${allocationName}` : (allocationName || allocationCode);
+        const uom = item.uom || item.unit || 'Pkk';
+
+        result.push({
+          ...item,
+          id: item.id || docNo,
+          rawConsolidationId: item.id || docNo,
+          docNo,
+          tanggal: rawDate,
+          date: rawDate,
+          allocationCode,
+          allocationName,
+          alokasi,
+          workGroupRoleCode: item.workGroupRoleCode || item.roleCode || 'PEKERJA_BIBITAN',
+          workGroupRoleName: item.roleName || 'Pekerja Bibitan',
+          roleCode: item.workGroupRoleCode || item.roleCode || 'PEKERJA_BIBITAN',
+          roleName: item.roleName || 'Pekerja Bibitan',
+          taskQuantity: Number(item.taskQuantity || 0),
+          workerCount: wList.length || Number(item.workerCount || 1),
+          totalHasil,
+          uom,
+          unit: uom,
+          workers: wList,
+          pekerja: wList,
+          mandor: mandorName,
+          createdByName: resolveTxCreatorInfo(item).name,
+          createdByRole: resolveTxCreatorInfo(item).role,
+          createdBy: resolveTxCreatorInfo(item).display,
+          sourceCount,
+          sourceTransactionIds: item.sourceTransactionIds || [],
+          status: item.status || 'CONSOLIDATED'
+        });
+      }
+    });
+    return result;
   }
   const items = storage.get(cfg.storageKey, []);
   return items || [];
@@ -728,11 +1212,23 @@ function saveTxList(modId, list) {
   if (modId === 'nurseryActivity') {
     storage.set('nursery_activity_records', list);
   }
+  if (modId === 'mandoranConsolidation') {
+    storage.set('nursery_mandoran_consolidations', list);
+  }
   if (modId === 'material') {
-    storage.set('materials_transactions', list);
+    storage.set('issue_documents', list);
   }
   if (modId === 'request') {
     storage.set('requests_transactions', list);
+  }
+  if (modId === 'dederan') {
+    storage.set('dederan_transactions', list);
+  }
+  if (modId === 'dispatch') {
+    storage.set('dispatch_transactions', list);
+  }
+  if (modId === 'destruction') {
+    storage.set('destruction_transactions', list);
   }
   list.forEach((item) => {
     try {
@@ -847,8 +1343,8 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
       const dbList = await receptionRepository.list();
       const stored = storage.get('receipt_transactions', []);
       const map = new Map();
-      (dbList || []).forEach((it) => map.set(it.id || it.docNo, it));
-      stored.forEach((it) => {
+      stored.forEach((it) => map.set(it.id || it.docNo, it));
+      (dbList || []).forEach((it) => {
         if (!map.has(it.id || it.docNo)) map.set(it.id || it.docNo, it);
       });
       const merged = Array.from(map.values()).map((it, idx) => {
@@ -871,8 +1367,8 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
       const dbList = await seedingRepository.list();
       const stored = storage.get('seeding_transactions', []);
       const map = new Map();
-      (dbList || []).forEach((it) => map.set(it.id || it.docNo, it));
-      stored.forEach((it) => {
+      stored.forEach((it) => map.set(it.id || it.docNo, it));
+      (dbList || []).forEach((it) => {
         if (!map.has(it.id || it.docNo)) map.set(it.id || it.docNo, it);
       });
       const merged = Array.from(map.values()).map((it, idx) => {
@@ -898,8 +1394,8 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
       const dbList = await buddingRepository.list();
       const stored = storage.get('budding_transactions', []);
       const map = new Map();
-      (dbList || []).forEach((it) => map.set(it.id || it.docNo, it));
-      stored.forEach((it) => {
+      stored.forEach((it) => map.set(it.id || it.docNo, it));
+      (dbList || []).forEach((it) => {
         if (!map.has(it.id || it.docNo)) map.set(it.id || it.docNo, it);
       });
       const merged = Array.from(map.values()).map((it, idx) => {
@@ -927,8 +1423,8 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
       const dbList = await inspectionRepository.list();
       const stored = storage.get('inspection_transactions', []);
       const map = new Map();
-      (dbList || []).forEach((it) => map.set(it.id || it.docNo, it));
-      stored.forEach((it) => {
+      stored.forEach((it) => map.set(it.id || it.docNo, it));
+      (dbList || []).forEach((it) => {
         if (!map.has(it.id || it.docNo)) map.set(it.id || it.docNo, it);
       });
       const merged = Array.from(map.values());
@@ -941,8 +1437,8 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
       const dbList = await selectionRepository.list();
       const stored = storage.get('selection_transactions', storage.get('selection_pool', []));
       const map = new Map();
-      (dbList || []).forEach((it) => map.set(it.id || it.docNo, it));
-      stored.forEach((it) => {
+      stored.forEach((it) => map.set(it.id || it.docNo, it));
+      (dbList || []).forEach((it) => {
         if (!map.has(it.id || it.docNo)) map.set(it.id || it.docNo, it);
       });
       const merged = Array.from(map.values());
@@ -985,29 +1481,15 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
 
     // 10. Material & Logistik
     if (!targetModId || targetModId === 'material') {
-      const dbStocks = await warehouseStockRepository.list();
-      const stored = storage.get('materials_transactions', []);
-      const map = new Map();
-      (dbStocks || []).forEach((it) =>
-        map.set(it.id || it.code, {
-          id: it.id || it.code,
-          materialCode: it.code || it.id,
-          materialName: it.name || it.nama,
-          category: it.category || 'Pupuk & Bahan',
-          unit: it.unit || 'Kg/Bag',
-          initialStock: it.initialStock || it.stock || 100,
-          qtyIn: it.qtyIn || 0,
-          qtyOut: it.qtyOut || 0,
-          currentStock: it.stock !== undefined ? it.stock : it.currentStock || 100,
-          status: 'TERSEDIA'
-        })
-      );
-      stored.forEach((it) => {
-        if (!map.has(it.id || it.materialCode)) map.set(it.id || it.materialCode, it);
-      });
-      const merged = Array.from(map.values());
-      storage.set('materials_transactions', merged);
-      if (targetModId === 'material') syncedCount = merged.length;
+      initMaterialMasterStorage();
+      const docs = getAllIssueDocuments();
+      if (targetModId === 'material') syncedCount = (docs || []).length;
+    }
+
+    // 10b. Konsolidasi Mandoran
+    if (!targetModId || targetModId === 'mandoranConsolidation') {
+      const stored = storage.get('nursery_mandoran_consolidations', []);
+      if (targetModId === 'mandoranConsolidation') syncedCount = stored.length;
     }
 
     // 11. Pengeluaran Bibit
@@ -1015,8 +1497,8 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
       const dbList = await requestRepository.list();
       const stored = storage.get('requests_transactions', storage.get('requests', []));
       const map = new Map();
-      (dbList || []).forEach((it) => map.set(it.id || it.docNo, it));
-      stored.forEach((it) => {
+      stored.forEach((it) => map.set(it.id || it.docNo, it));
+      (dbList || []).forEach((it) => {
         if (!map.has(it.id || it.docNo)) map.set(it.id || it.docNo, it);
       });
       const merged = Array.from(map.values());
@@ -1024,7 +1506,25 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
       if (targetModId === 'request') syncedCount = merged.length;
     }
 
-    // 12. Antrean Sinkronisasi
+    // 12. Dederan Benih
+    if (!targetModId || targetModId === 'dederan') {
+      const stored = storage.get('dederan_transactions', []);
+      if (targetModId === 'dederan') syncedCount = stored.length;
+    }
+
+    // 13. Pengiriman Bibit (Dispatch)
+    if (!targetModId || targetModId === 'dispatch') {
+      const stored = storage.get('dispatch_transactions', []);
+      if (targetModId === 'dispatch') syncedCount = stored.length;
+    }
+
+    // 14. Pemusnahan Bibit (Destruction)
+    if (!targetModId || targetModId === 'destruction') {
+      const stored = storage.get('destruction_transactions', []);
+      if (targetModId === 'destruction') syncedCount = stored.length;
+    }
+
+    // 15. Antrean Sinkronisasi
     if (!targetModId || targetModId === 'syncQueue') {
       const dbList = await syncQueueRepository.list();
       const stored = storage.get('sync_queue', []);
@@ -1073,6 +1573,13 @@ export function initReviewWorkspace() {
     updateMarkers();
     if (activeWorkspaceTab === 'transactions') {
       syncAllTxFromMobileDB();
+    }
+  });
+
+  // Dengarkan perubahan data di storage agar Tab Transaksi selalu realtime tersinkron dengan Frame HP
+  window.addEventListener('sigma:storage-update', () => {
+    if (activeWorkspaceTab === 'transactions') {
+      renderReviewPanel();
     }
   });
 }
@@ -2147,10 +2654,34 @@ function openChangeStatusModal(note) {
 // ==========================================================================
 
 function parseTxNumericQty(val) {
-  if (typeof val === 'number') return val;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
   if (!val) return 0;
-  const numStr = String(val).replace(/[^0-9.-]/g, '');
-  return parseInt(numStr, 10) || 0;
+  let s = String(val).trim();
+  s = s.replace(/[^0-9.,-]/g, '');
+  if (!s) return 0;
+
+  if (s.includes('.') && s.includes(',')) {
+    if (s.indexOf('.') < s.lastIndexOf(',')) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+  } else if (s.includes('.')) {
+    const parts = s.split('.');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = s.replace(/\./g, '');
+    }
+  } else if (s.includes(',')) {
+    const parts = s.split(',');
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      s = s.replace(/,/g, '');
+    } else {
+      s = s.replace(',', '.');
+    }
+  }
+
+  const num = parseFloat(s);
+  return isNaN(num) ? 0 : num;
 }
 
 function getTxItemUnit(item, modId) {
@@ -2170,8 +2701,20 @@ function getTxItemUnit(item, modId) {
     if (jenis.includes('bibit') || jenis.includes('tanaman')) return 'Pkk';
     if (jenis.includes('entres') || jenis.includes('kayu')) return 'Btg';
   }
-  if (modId === 'seeding') {
+  if (modId === 'seeding' || modId === 'dederan') {
     return 'Butir';
+  }
+  if (modId === 'entres') {
+    return 'Btg';
+  }
+  if (modId === 'material') {
+    return item.uom || item.unit || 'Unit';
+  }
+  if (modId === 'nurseryActivity' || modId === 'mandoranConsolidation') {
+    return item.uom || item.unit || 'Pkk';
+  }
+  if (modId === 'dispatch' || modId === 'request' || modId === 'destruction') {
+    return 'Pkk';
   }
   return TX_MODULES[modId]?.unit || 'Pkk';
 }
@@ -2190,13 +2733,17 @@ function renderTransactionsWorkspaceTab() {
     if (txStatusFilter !== 'ALL') {
       if ((item.status || 'SUBMITTED') !== txStatusFilter) return false;
     }
+    if (activeTxTab === 'nurseryActivity' && txActivityModeFilter !== 'ALL') {
+      const mode = item.activityEntryMode || item.entryMode || 'HARIAN';
+      if (mode !== txActivityModeFilter) return false;
+    }
     return true;
   });
 
   // Calculate volume & unit dynamically
   const dominantUnit = filteredList.length > 0 ? getTxItemUnit(filteredList[0], activeTxTab) : (curMod.unit || '');
   const totalVolume = curMod.qtyField
-    ? filteredList.reduce((sum, it) => sum + parseTxNumericQty(it[curMod.qtyField] || it.qty || 0), 0)
+    ? filteredList.reduce((sum, it) => sum + parseTxNumericQty(it[curMod.qtyField] || it.totalHasil || it.jumlahBenih || it.qty || 0), 0)
     : 0;
 
   let html = `
@@ -2231,7 +2778,7 @@ function renderTransactionsWorkspaceTab() {
       <div class="tx-context-strip">
         <div class="tx-context-badge">
           <span class="tx-context-dot"></span>
-          <span>12 Modul Pembibitan</span>
+          <span>${Object.keys(TX_MODULES).length} Modul Pembibitan</span>
         </div>
         <span style="color: #cbd5e1;">•</span>
         <span class="tx-context-desc">Sinkronisasi HP Aktif & Terintegrasi</span>
@@ -2256,7 +2803,7 @@ function renderTransactionsWorkspaceTab() {
 
       <!-- FILTER BAR & METRICS -->
       <div class="tx-toolbar">
-        <div class="tx-toolbar-left">
+        <div class="tx-toolbar-left" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
           <div class="tx-search-box">
             <span class="tx-search-icon">
               <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
@@ -2267,6 +2814,10 @@ function renderTransactionsWorkspaceTab() {
           </div>
           <select class="tx-status-select" id="tx-filter-status">
             <option value="ALL" ${txStatusFilter === 'ALL' ? 'selected' : ''}>Semua Status</option>
+            <option value="CONSOLIDATED" ${txStatusFilter === 'CONSOLIDATED' ? 'selected' : ''}>Status: Consolidated</option>
+            <option value="AVAILABLE" ${txStatusFilter === 'AVAILABLE' ? 'selected' : ''}>Status: Available</option>
+            <option value="PARTIALLY_USED" ${txStatusFilter === 'PARTIALLY_USED' ? 'selected' : ''}>Status: Partially Used</option>
+            <option value="FULLY_USED" ${txStatusFilter === 'FULLY_USED' ? 'selected' : ''}>Status: Fully Used</option>
             <option value="APPROVED" ${txStatusFilter === 'APPROVED' ? 'selected' : ''}>Status: Approved</option>
             <option value="SUBMITTED" ${txStatusFilter === 'SUBMITTED' ? 'selected' : ''}>Status: Submitted</option>
             <option value="COMPLETED" ${txStatusFilter === 'COMPLETED' ? 'selected' : ''}>Status: Completed</option>
@@ -2274,6 +2825,31 @@ function renderTransactionsWorkspaceTab() {
             <option value="DRAFT" ${txStatusFilter === 'DRAFT' ? 'selected' : ''}>Status: Draft</option>
             <option value="HADIR" ${txStatusFilter === 'HADIR' ? 'selected' : ''}>Status: Hadir</option>
           </select>
+          ${activeTxTab === 'nurseryActivity' ? `
+            <select class="tx-status-select" id="tx-filter-activity-mode">
+              <option value="ALL" ${txActivityModeFilter === 'ALL' ? 'selected' : ''}>Semua Fitur (Harian & Mandoran)</option>
+              <option value="HARIAN" ${txActivityModeFilter === 'HARIAN' ? 'selected' : ''}>Rekam Aktivitas Harian (Alokasi CFNA)</option>
+              <option value="MANDORAN" ${txActivityModeFilter === 'MANDORAN' ? 'selected' : ''}>Rekam Aktivitas Mandoran (Per Pekerja)</option>
+            </select>
+            <div style="display: flex; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 2px; gap: 2px;">
+              <button id="btn-toggle-view-doc" type="button" style="padding: 4px 10px; font-size: 0.74rem; font-weight: 700; border: none; border-radius: 4px; cursor: pointer; transition: all 0.15s; background: ${txActivityViewMode === 'DOC' ? '#ffffff' : 'transparent'}; color: ${txActivityViewMode === 'DOC' ? '#0f172a' : '#64748b'}; box-shadow: ${txActivityViewMode === 'DOC' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'};">
+                Ringkasan Dokumen
+              </button>
+              <button id="btn-toggle-view-worker" type="button" style="padding: 4px 10px; font-size: 0.74rem; font-weight: 700; border: none; border-radius: 4px; cursor: pointer; transition: all 0.15s; background: ${txActivityViewMode === 'WORKER' ? '#ffffff' : 'transparent'}; color: ${txActivityViewMode === 'WORKER' ? '#0f172a' : '#64748b'}; box-shadow: ${txActivityViewMode === 'WORKER' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'};">
+                Rincian per Pekerja
+              </button>
+            </div>
+          ` : ''}
+          ${activeTxTab === 'mandoranConsolidation' ? `
+            <div style="display: flex; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 2px; gap: 2px;">
+              <button id="btn-toggle-consol-doc" type="button" style="padding: 4px 10px; font-size: 0.74rem; font-weight: 700; border: none; border-radius: 4px; cursor: pointer; transition: all 0.15s; background: ${txConsolidationViewMode === 'DOC' ? '#ffffff' : 'transparent'}; color: ${txConsolidationViewMode === 'DOC' ? '#0f172a' : '#64748b'}; box-shadow: ${txConsolidationViewMode === 'DOC' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'};">
+                Ringkasan per Alokasi
+              </button>
+              <button id="btn-toggle-consol-worker" type="button" style="padding: 4px 10px; font-size: 0.74rem; font-weight: 700; border: none; border-radius: 4px; cursor: pointer; transition: all 0.15s; background: ${txConsolidationViewMode === 'WORKER' ? '#ffffff' : 'transparent'}; color: ${txConsolidationViewMode === 'WORKER' ? '#0f172a' : '#64748b'}; box-shadow: ${txConsolidationViewMode === 'WORKER' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'};">
+                Rincian per Alokasi ➔ Pekerja
+              </button>
+            </div>
+          ` : ''}
           ${txSearchQuery
       ? '<button class="tx-btn-reset-search" id="btn-tx-reset-search" type="button">Reset</button>'
       : ''
@@ -2284,13 +2860,26 @@ function renderTransactionsWorkspaceTab() {
           <span class="tx-metric-badge">
             Total: ${filteredList.length} Record
           </span>
-          ${curMod.qtyField
+          ${(activeTxTab === 'mandoranConsolidation' || activeTxTab === 'nurseryActivity') ? `
+            <span class="tx-metric-badge volume" style="background: #f0fdf4; color: #166534; border-color: #bbf7d0;">
+              Hasil Kerja: ${(() => {
+                const uomTotals = new Map();
+                filteredList.forEach(it => {
+                  const u = it.uom || 'Pkk';
+                  const v = parseTxNumericQty(it.totalHasil !== undefined ? it.totalHasil : (it.volumePkk || 0));
+                  uomTotals.set(u, (uomTotals.get(u) || 0) + v);
+                });
+                if (uomTotals.size === 0) return '0';
+                return Array.from(uomTotals.entries()).map(([u, v]) => `${v.toLocaleString('id-ID')} ${u}`).join(' | ');
+              })()}
+            </span>
+          ` : (curMod.qtyField
       ? `
             <span class="tx-metric-badge volume">
               Volume: ${totalVolume.toLocaleString('id-ID')} ${esc(dominantUnit)}
             </span>
           `
-      : ''
+      : '')
     }
         </div>
       </div>
@@ -2332,30 +2921,35 @@ function getTxStatusBadge(status) {
   let bg = '#f1f5f9';
   let color = '#475569';
   let border = '#cbd5e1';
-  if (['APPROVED', 'VERIFIED', 'COMPLETED', 'HADIR', 'SYNCED'].includes(status)) {
+  let label = status;
+
+  if (['APPROVED', 'VERIFIED', 'COMPLETED', 'HADIR', 'SYNCED', 'AVAILABLE', 'TERSEDIA'].includes(status)) {
     bg = '#f0fdf4';
     color = '#15803d';
     border = '#bbf7d0';
-  } else if (['SUBMITTED', 'UNDER_REVIEW', 'PROCESS'].includes(status)) {
+    if (status === 'AVAILABLE') label = 'AVAILABLE';
+  } else if (['SUBMITTED', 'UNDER_REVIEW', 'PROCESS', 'PARTIALLY_USED'].includes(status)) {
     bg = '#eff6ff';
     color = '#1d4ed8';
     border = '#bfdbfe';
+    if (status === 'PARTIALLY_USED') label = 'PARTIALLY USED';
   } else if (['DRAFT', 'PENDING', 'REGRAFTING', 'PENDING_DECLARATION'].includes(status)) {
     bg = '#fffbeb';
     color = '#b45309';
     border = '#fde68a';
-  } else if (['FAILED', 'AFKIR', 'REJECTED', 'MATI'].includes(status)) {
+  } else if (['FAILED', 'AFKIR', 'REJECTED', 'MATI', 'FULLY_USED', 'HABIS'].includes(status)) {
     bg = '#fef2f2';
     color = '#b91c1c';
     border = '#fecaca';
+    if (status === 'FULLY_USED') label = 'FULLY USED';
   }
-  return `<span style="display: inline-block; font-size: 0.68rem; font-weight: 700; background: ${bg}; color: ${color}; border: 1px solid ${border}; padding: 2px 7px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.02em;">${esc(status)}</span>`;
+  return `<span style="display: inline-block; font-size: 0.68rem; font-weight: 700; background: ${bg}; color: ${color}; border: 1px solid ${border}; padding: 2px 7px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.02em;">${esc(label)}</span>`;
 }
 
-function getTxCrudButtons(idx) {
+function getTxCrudButtons(idx, docNo = '') {
   return `
     <div style="position: relative; display: inline-block;">
-      <button type="button" class="btn-tx-action-trigger" data-idx="${idx}" title="Menu Aksi" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: #475569; padding: 0; transition: all 0.15s ease;">
+      <button type="button" class="btn-tx-action-trigger" data-idx="${idx}" data-docno="${esc(docNo)}" title="Menu Aksi" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: #475569; padding: 0; transition: all 0.15s ease;">
         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="1.3" fill="currentColor"></circle>
           <circle cx="19" cy="12" r="1.3" fill="currentColor"></circle>
@@ -2364,15 +2958,15 @@ function getTxCrudButtons(idx) {
       </button>
 
       <div class="tx-action-dropdown" style="display: none; position: absolute; right: 0; top: 32px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.14); z-index: 100; min-width: 125px; overflow: hidden; text-align: left;">
-        <button type="button" class="btn-tx-detail" data-idx="${idx}" style="width: 100%; padding: 8px 12px; text-align: left; background: transparent; border: none; font-size: 0.76rem; font-weight: 600; color: #334155; display: flex; align-items: center; gap: 8px; cursor: pointer; border-bottom: 1px solid #f1f5f9;">
+        <button type="button" class="btn-tx-detail" data-idx="${idx}" data-docno="${esc(docNo)}" style="width: 100%; padding: 8px 12px; text-align: left; background: transparent; border: none; font-size: 0.76rem; font-weight: 600; color: #334155; display: flex; align-items: center; gap: 8px; cursor: pointer; border-bottom: 1px solid #f1f5f9;">
           <svg viewBox="0 0 24 24" width="13" height="13" stroke="#475569" stroke-width="2.2" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span>Detail</span>
         </button>
-        <button type="button" class="btn-tx-edit" data-idx="${idx}" style="width: 100%; padding: 8px 12px; text-align: left; background: transparent; border: none; font-size: 0.76rem; font-weight: 600; color: #1d4ed8; display: flex; align-items: center; gap: 8px; cursor: pointer; border-bottom: 1px solid #f1f5f9;">
+        <button type="button" class="btn-tx-edit" data-idx="${idx}" data-docno="${esc(docNo)}" style="width: 100%; padding: 8px 12px; text-align: left; background: transparent; border: none; font-size: 0.76rem; font-weight: 600; color: #1d4ed8; display: flex; align-items: center; gap: 8px; cursor: pointer; border-bottom: 1px solid #f1f5f9;">
           <svg viewBox="0 0 24 24" width="13" height="13" stroke="#1d4ed8" stroke-width="2.2" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
           <span>Edit</span>
         </button>
-        <button type="button" class="btn-tx-del" data-idx="${idx}" style="width: 100%; padding: 8px 12px; text-align: left; background: transparent; border: none; font-size: 0.76rem; font-weight: 600; color: #dc2626; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+        <button type="button" class="btn-tx-del" data-idx="${idx}" data-docno="${esc(docNo)}" style="width: 100%; padding: 8px 12px; text-align: left; background: transparent; border: none; font-size: 0.76rem; font-weight: 600; color: #dc2626; display: flex; align-items: center; gap: 8px; cursor: pointer;">
           <svg viewBox="0 0 24 24" width="13" height="13" stroke="#dc2626" stroke-width="2.2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
           <span>Hapus</span>
         </button>
@@ -2447,7 +3041,7 @@ function renderDynamicTxTable(modId, curMod, list) {
     `;
     tbodyHtml = list.map((item, idx) => {
       const itemUnit = getTxItemUnit(item, 'reception');
-      const numQty = parseTxNumericQty(item.qty || 0);
+      const numQty = parseTxNumericQty(item.jumlahBenih || item.qty || item.totalDiterima || 0);
       return `
       <tr style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease;">
         <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
@@ -2507,6 +3101,39 @@ function renderDynamicTxTable(modId, curMod, list) {
           <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(idx)}</td>
         </tr>
       `;
+    }).join('');
+  } else if (modId === 'dederan') {
+    theadHtml = `
+      <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569;">
+        <th style="padding: 10px 12px; width: 40px;">#</th>
+        <th style="padding: 10px 12px;">No. Dokumen Deder</th>
+        <th style="padding: 10px 12px;">Tanggal Deder</th>
+        <th style="padding: 10px 12px;">Ref. Dok Induk / Penerimaan</th>
+        <th style="padding: 10px 12px;">No. Bedengan</th>
+        <th style="padding: 10px 12px;">Klon Benih</th>
+        <th style="padding: 10px 12px; text-align: right;">Jumlah Dideder</th>
+        <th style="padding: 10px 12px;">Petugas / Mandor</th>
+        <th style="padding: 10px 12px; text-align: center;">Status</th>
+        <th style="padding: 10px 12px; text-align: center; width: 60px;">Aksi</th>
+      </tr>
+    `;
+    tbodyHtml = list.map((item, idx) => {
+      const itemUnit = getTxItemUnit(item, 'dederan');
+      const numDeder = parseTxNumericQty(item.jumlahDeder !== undefined ? item.jumlahDeder : (item.qty || 0));
+      return `
+      <tr style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease;">
+        <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+        <td style="padding: 10px 12px; font-weight: 700; color: #0f172a;">${esc(item.docNo || formatStandardDocNo(2026, 'DED', idx + 1))}</td>
+        <td style="padding: 10px 12px; color: #334155;">${esc(item.tanggal || item.tanggalDeder || todayISO())}</td>
+        <td style="padding: 10px 12px; font-size: 0.72rem; color: #475569;">${esc(item.parentDocNo || item.parentDederIndukDocNo || item.sourceReceiptDocNo || '-')}</td>
+        <td style="padding: 10px 12px; font-weight: 700; color: #111827;">${esc(item.bedengan || item.bedenganCode || 'Bedengan 01')}</td>
+        <td style="padding: 10px 12px; font-weight: 700; color: #116834;">${esc(item.klon || 'GT 1')}</td>
+        <td style="padding: 10px 12px; text-align: right; font-weight: 700; color: #116834;">${numDeder.toLocaleString('id-ID')} ${esc(itemUnit)}</td>
+        <td style="padding: 10px 12px; color: #475569;">${esc(item.createdBy || item.actorName || 'Wagiman')}</td>
+        <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(item.status || 'MENUNGGU_VERIFIKASI')}</td>
+        <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(idx)}</td>
+      </tr>
+    `;
     }).join('');
   } else if (modId === 'budding') {
     theadHtml = `
@@ -2705,69 +3332,227 @@ function renderDynamicTxTable(modId, curMod, list) {
     `;
     }).join('');
   } else if (modId === 'nurseryActivity') {
-    theadHtml = `
-      <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569;">
-        <th style="padding: 10px 12px; width: 40px;">#</th>
-        <th style="padding: 10px 12px;">No. Dokumen Rawat</th>
-        <th style="padding: 10px 12px;">Tanggal</th>
-        <th style="padding: 10px 12px;">Jenis Kegiatan</th>
-        <th style="padding: 10px 12px;">Tahapan & Bedengan</th>
-        <th style="padding: 10px 12px;">Bahan / Dosis Material</th>
-        <th style="padding: 10px 12px; text-align: right;">Volume Kegiatan</th>
-        <th style="padding: 10px 12px;">Mandor / Tim</th>
-        <th style="padding: 10px 12px; text-align: center;">Status</th>
-        <th style="padding: 10px 12px; text-align: center; width: 60px;">Aksi</th>
-      </tr>
-    `;
-    tbodyHtml = list.map((item, idx) => {
-      const itemUnit = getTxItemUnit(item, 'nurseryActivity');
-      const numVol = parseTxNumericQty(item.volumePkk || item.qty || 0);
-      return `
-      <tr style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease;">
-        <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
-        <td style="padding: 10px 12px; font-weight: 700; color: #0f172a;">${esc(item.docNo || item.id || `ACT-${idx + 1}`)}</td>
-        <td style="padding: 10px 12px; color: #334155;">${esc(item.tanggal || item.date || todayISO())}</td>
-        <td style="padding: 10px 12px; font-weight: 600; color: #1e293b;">${esc(item.activityType || item.jenisKegiatan || 'Pemupukan Rutin')}</td>
-        <td style="padding: 10px 12px; color: #475569;">${esc(item.tahapan || 'Main Nursery')} - ${esc(item.bedengan || 'Bedengan 01')}</td>
-        <td style="padding: 10px 12px; font-size: 0.75rem; color: #334155;">${esc(item.materialName || item.dosis || 'NPK 15-15-15 (10gr/pkk)')}</td>
-        <td style="padding: 10px 12px; text-align: right; font-weight: 700; color: #116834;">${numVol.toLocaleString('id-ID')} ${esc(itemUnit)}</td>
-        <td style="padding: 10px 12px; color: #475569;">${esc(item.mandor || item.supervisor || 'Wagiman')}</td>
-        <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(item.status || 'VERIFIED')}</td>
-        <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(idx)}</td>
-      </tr>
-    `;
-    }).join('');
+    if (txActivityViewMode === 'WORKER') {
+      theadHtml = `
+        <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569; font-size: 0.74rem; text-transform: uppercase;">
+          <th style="padding: 10px 12px; width: 40px;">#</th>
+          <th style="padding: 10px 12px;">No. Dokumen</th>
+          <th style="padding: 10px 12px; text-align: center;">Fitur Rekam</th>
+          <th style="padding: 10px 12px;">Tanggal</th>
+          <th style="padding: 10px 12px;">Alokasi Kegiatan</th>
+          <th style="padding: 10px 12px;">Work Group Role Code</th>
+          <th style="padding: 10px 12px;">Nama Pekerja</th>
+          <th style="padding: 10px 12px;">NIK / Kode</th>
+          <th style="padding: 10px 12px;">Posisi / Peran</th>
+          <th style="padding: 10px 12px; text-align: right;">Target Basis</th>
+          <th style="padding: 10px 12px; text-align: right;">Realisasi Hasil</th>
+          <th style="padding: 10px 12px;">Mandor</th>
+          <th style="padding: 10px 12px;">Created By</th>
+          <th style="padding: 10px 12px; text-align: center;">Status</th>
+          <th style="padding: 10px 12px; text-align: center; width: 60px;">Aksi</th>
+        </tr>
+      `;
+      const workerRows = [];
+      list.forEach((doc, docIdx) => {
+        const pList = Array.isArray(doc.pekerja) && doc.pekerja.length > 0
+          ? doc.pekerja
+          : [{ name: doc.mandor || 'Pekerja Pelaksana', code: '-', position: 'Pekerja Bibitan', inputHasil: doc.volumePkk }];
+        pList.forEach((w) => {
+          workerRows.push({ doc, docIdx, w });
+        });
+      });
+
+      if (workerRows.length === 0) {
+        tbodyHtml = `<tr><td colspan="15" style="padding: 24px; text-align: center; color: #64748b; font-size: 0.8rem;">Tidak ada rincian data tenaga kerja ditemukan.</td></tr>`;
+      } else {
+        tbodyHtml = workerRows.map((itemRow, idx) => {
+          const doc = itemRow.doc;
+          const w = itemRow.w;
+          const isMandoran = doc.activityEntryMode === 'MANDORAN';
+          const targetQty = parseTxNumericQty(w.taskQuantity !== undefined ? w.taskQuantity : doc.taskQuantity || 0);
+          const hasilVal = parseTxNumericQty(w.inputHasil !== undefined ? w.inputHasil : doc.volumePkk || 0);
+          const uom = doc.uom || 'Pkk';
+
+          const modeBadge = isMandoran
+            ? `<span style="display: inline-block; font-size: 0.68rem; font-weight: 800; padding: 2px 7px; border-radius: 9999px; background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; white-space: nowrap;">MANDORAN</span>`
+            : `<span style="display: inline-block; font-size: 0.68rem; font-weight: 800; padding: 2px 7px; border-radius: 9999px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; white-space: nowrap;">HARIAN</span>`;
+
+          const hasilHtml = isMandoran
+            ? `<span style="font-weight: 800; color: #15803d; font-size: 0.82rem;">${hasilVal.toLocaleString('id-ID')} ${esc(uom)}</span>`
+            : `<span style="font-weight: 700; color: #0284c7; font-size: 0.78rem; background: #eff6ff; padding: 2px 6px; border-radius: 4px;">Hadir Penuh</span>`;
+
+          return `
+            <tr class="tx-table-row-clickable" data-idx="${itemRow.docIdx}" data-docno="${esc(doc.docNo || '')}" style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease; cursor: pointer;">
+              <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+              <td style="padding: 10px 12px; font-weight: 700; color: #0284c7; font-family: monospace; font-size: 0.8rem;">${esc(doc.docNo || '-')}</td>
+              <td style="padding: 10px 12px; text-align: center;">${modeBadge}</td>
+              <td style="padding: 10px 12px; color: #334155; font-size: 0.78rem;">${esc(doc.tanggal || '-')}</td>
+              <td style="padding: 10px 12px; font-size: 0.8rem; color: #1e293b; max-width: 200px;">
+                <strong>${esc(doc.allocationCode || '-')}</strong><br>
+                <span style="color: #64748b; font-size: 0.74rem;">${esc(doc.allocationName || doc.activityType || '-')}</span>
+              </td>
+              <td style="padding: 10px 12px; font-family: monospace; font-size: 0.76rem; font-weight: 700; color: #0369a1;">
+                ${esc(doc.workGroupRoleCode || '-')}
+              </td>
+              <td style="padding: 10px 12px; font-weight: 700; color: #0f172a; font-size: 0.82rem;">${esc(w.name || w.workerName || 'Pekerja')}</td>
+              <td style="padding: 10px 12px; font-family: monospace; font-size: 0.75rem; color: #64748b;">${esc(w.code || w.workerCode || '-')}</td>
+              <td style="padding: 10px 12px; color: #475569; font-size: 0.76rem;">${esc(w.position || w.role || (isMandoran ? 'Pekerja Borongan' : 'Pekerja Harian'))}</td>
+              <td style="padding: 10px 12px; text-align: right; color: #64748b; font-size: 0.78rem;">
+                ${isMandoran && targetQty > 0 ? `${targetQty.toLocaleString('id-ID')} ${esc(uom)}` : '<span style="color:#94a3b8;">-</span>'}
+              </td>
+              <td style="padding: 10px 12px; text-align: right;">${hasilHtml}</td>
+              <td style="padding: 10px 12px; color: #475569; font-size: 0.78rem;">${esc(doc.mandor || '-')}</td>
+              <td style="padding: 10px 12px; font-size: 0.78rem; color: #1e293b; white-space: nowrap;">
+                <strong>${esc(doc.createdByName || 'Wagiman')}</strong><br>
+                <span style="display: inline-block; font-size: 0.68rem; font-weight: 700; color: #0284c7; background: #f0f9ff; border: 1px solid #bae6fd; padding: 1px 6px; border-radius: 4px; margin-top: 2px;">
+                  ${esc(doc.createdByRole || 'Mantri Bibitan')}
+                </span>
+              </td>
+              <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(doc.status || 'VERIFIED')}</td>
+              <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(itemRow.docIdx, doc.docNo)}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+    } else {
+      // DOCUMENT SUMMARY VIEW
+      theadHtml = `
+        <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569; font-size: 0.74rem; text-transform: uppercase;">
+          <th style="padding: 10px 12px; width: 40px;">#</th>
+          <th style="padding: 10px 12px;">No. Dokumen Rawat</th>
+          <th style="padding: 10px 12px; text-align: center;">Fitur Rekam</th>
+          <th style="padding: 10px 12px;">Tanggal</th>
+          <th style="padding: 10px 12px;">Alokasi Kegiatan</th>
+          <th style="padding: 10px 12px;">Work Group Role Code</th>
+          <th style="padding: 10px 12px;">Rincian Tenaga Kerja & Hasil</th>
+          <th style="padding: 10px 12px; text-align: right;">Target Basis</th>
+          <th style="padding: 10px 12px; text-align: right;">Total Realisasi Hasil</th>
+          <th style="padding: 10px 12px;">Mandor / Tim</th>
+          <th style="padding: 10px 12px;">Created By</th>
+          <th style="padding: 10px 12px; text-align: center;">Status</th>
+          <th style="padding: 10px 12px; text-align: center; width: 60px;">Aksi</th>
+        </tr>
+      `;
+      tbodyHtml = list.map((item, idx) => {
+        const isMandoran = item.activityEntryMode === 'MANDORAN';
+        const pList = Array.isArray(item.pekerja) ? item.pekerja : [];
+        const itemUnit = item.uom || 'Pkk';
+        const numVol = parseTxNumericQty(item.totalHasil !== undefined ? item.totalHasil : (item.volumePkk || 0));
+        const targetBasis = parseTxNumericQty(item.taskQuantity || 0);
+
+        const modeBadge = isMandoran
+          ? `<span style="display: inline-block; font-size: 0.68rem; font-weight: 800; padding: 2px 7px; border-radius: 9999px; background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; white-space: nowrap;">REKAM MANDORAN</span>`
+          : `<span style="display: inline-block; font-size: 0.68rem; font-weight: 800; padding: 2px 7px; border-radius: 9999px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; white-space: nowrap;">REKAM HARIAN</span>`;
+
+        let workerSummaryHtml = '';
+        if (pList.length === 0) {
+          workerSummaryHtml = `<span style="color: #94a3b8; font-size: 0.74rem;">Tidak ada pekerja</span>`;
+        } else if (isMandoran) {
+          workerSummaryHtml = `
+            <div style="display: flex; flex-direction: column; gap: 3px; max-width: 250px;">
+              <span style="font-size: 0.70rem; font-weight: 800; color: #c2410c; background: #fff7ed; padding: 1px 6px; border-radius: 4px; display: inline-block; width: fit-content;">
+                ${pList.length} Pekerja Borongan
+              </span>
+              ${pList.slice(0, 2).map(w => `
+                <div style="font-size: 0.74rem; color: #334155; display: flex; justify-content: space-between; gap: 8px;">
+                  <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong>${esc(w.name || w.workerName)}</strong></span>
+                  <strong style="color: #15803d; white-space: nowrap;">${Number(w.inputHasil || 0).toLocaleString('id-ID')} ${esc(itemUnit)}</strong>
+                </div>
+              `).join('')}
+              ${pList.length > 2 ? `<span style="font-size: 0.70rem; color: #64748b; font-style: italic;">+${pList.length - 2} pekerja lainnya...</span>` : ''}
+            </div>
+          `;
+        } else {
+          workerSummaryHtml = `
+            <div style="display: flex; flex-direction: column; gap: 3px; max-width: 250px;">
+              <span style="font-size: 0.70rem; font-weight: 800; color: #1d4ed8; background: #eff6ff; padding: 1px 6px; border-radius: 4px; display: inline-block; width: fit-content;">
+                ${pList.length} Pekerja Harian
+              </span>
+              ${pList.slice(0, 2).map(w => `
+                <div style="font-size: 0.74rem; color: #334155;">
+                  <strong>${esc(w.name || w.workerName)}</strong> <span style="color: #64748b; font-size: 0.70rem;">(${esc(w.code || w.workerCode || '-')})</span>
+                </div>
+              `).join('')}
+              ${pList.length > 2 ? `<span style="font-size: 0.70rem; color: #64748b; font-style: italic;">+${pList.length - 2} pekerja lainnya...</span>` : ''}
+            </div>
+          `;
+        }
+
+        return `
+          <tr class="tx-table-row-clickable" data-idx="${idx}" data-docno="${esc(item.docNo || '')}" style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease; cursor: pointer;">
+            <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+            <td style="padding: 10px 12px; font-weight: 700; color: #0284c7; font-family: monospace; font-size: 0.82rem;">${esc(item.docNo || `ACT-${idx + 1}`)}</td>
+            <td style="padding: 10px 12px; text-align: center;">${modeBadge}</td>
+            <td style="padding: 10px 12px; color: #334155; font-size: 0.78rem;">${esc(item.tanggal || todayISO())}</td>
+            <td style="padding: 10px 12px; font-size: 0.8rem; color: #1e293b;">
+              <strong>${esc(item.allocationCode || '-')}</strong><br>
+              <span style="color: #475569; font-size: 0.74rem;">${esc(item.allocationName || item.activityType || '-')}</span>
+            </td>
+            <td style="padding: 10px 12px; font-family: monospace; font-size: 0.78rem; font-weight: 700; color: #0369a1;">
+              ${esc(item.workGroupRoleCode || '-')}
+            </td>
+            <td style="padding: 10px 12px;">${workerSummaryHtml}</td>
+            <td style="padding: 10px 12px; text-align: right; color: #64748b; font-size: 0.8rem;">
+              ${isMandoran && targetBasis > 0 ? `${targetBasis.toLocaleString('id-ID')} ${esc(itemUnit)}` : '<span style="color:#94a3b8;">-</span>'}
+            </td>
+            <td style="padding: 10px 12px; text-align: right; font-weight: 800; color: #116834; font-size: 0.85rem;">
+              ${numVol.toLocaleString('id-ID')} ${esc(itemUnit)}
+            </td>
+            <td style="padding: 10px 12px; color: #475569; font-size: 0.78rem;">${esc(item.mandor || 'Wagiman')}</td>
+            <td style="padding: 10px 12px; font-size: 0.78rem; color: #1e293b; white-space: nowrap;">
+              <strong>${esc(item.createdByName || 'Wagiman')}</strong><br>
+              <span style="display: inline-block; font-size: 0.68rem; font-weight: 700; color: #0284c7; background: #f0f9ff; border: 1px solid #bae6fd; padding: 1px 6px; border-radius: 4px; margin-top: 2px;">
+                ${esc(item.createdByRole || 'Mantri Bibitan')}
+              </span>
+            </td>
+            <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(item.status || 'VERIFIED')}</td>
+            <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(idx, item.docNo)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
   } else if (modId === 'material') {
     theadHtml = `
       <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569;">
         <th style="padding: 10px 12px; width: 40px;">#</th>
-        <th style="padding: 10px 12px;">Kode Material</th>
+        <th style="padding: 10px 12px;">Item Code</th>
         <th style="padding: 10px 12px;">Nama Material & Bahan</th>
-        <th style="padding: 10px 12px;">Kategori</th>
-        <th style="padding: 10px 12px;">Satuan</th>
-        <th style="padding: 10px 12px; text-align: right;">Stok Awal</th>
-        <th style="padding: 10px 12px; text-align: right;">Jlh Masuk</th>
-        <th style="padding: 10px 12px; text-align: right;">Jlh Terpakai</th>
-        <th style="padding: 10px 12px; text-align: right;">Stok Akhir</th>
-        <th style="padding: 10px 12px; text-align: center;">Status Mutasi</th>
+        <th style="padding: 10px 12px;">No. Dokumen Issue</th>
+        <th style="padding: 10px 12px;">Alokasi Biaya</th>
+        <th style="padding: 10px 12px; text-align: center;">Satuan (UOM)</th>
+        <th style="padding: 10px 12px; text-align: right;">Kuantitas Issue Gudang</th>
+        <th style="padding: 10px 12px; text-align: right;">Total Terpakai</th>
+        <th style="padding: 10px 12px; text-align: right;">Sisa Saldo Stok</th>
+        <th style="padding: 10px 12px; text-align: center;">Status Saldo</th>
         <th style="padding: 10px 12px; text-align: center; width: 60px;">Aksi</th>
       </tr>
     `;
-    tbodyHtml = list.map((item, idx) => `
+    tbodyHtml = list.map((item, idx) => {
+      const itemCode = item.itemCode || item.code || '-';
+      const itemName = item.itemName || item.materialName || item.name || '-';
+      const noIssue = item.noIssue || item.docNo || '-';
+      const alokasi = item.alokasi || ((item.kodeAlokasi && item.namaAlokasi) ? `${item.kodeAlokasi} — ${item.namaAlokasi}` : item.kodeAlokasi || '-');
+      const uom = item.uom || item.unit || '-';
+      const qtyIssue = parseTxNumericQty(item.quantityIssue !== undefined ? item.quantityIssue : item.initialStock || 0);
+      const usedQty = parseTxNumericQty(item.usedQuantity !== undefined ? item.usedQuantity : item.qtyOut || 0);
+      const remQty = parseTxNumericQty(item.remainingQuantity !== undefined ? item.remainingQuantity : Math.max(0, qtyIssue - usedQty));
+
+      return `
       <tr style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease;">
         <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
-        <td style="padding: 10px 12px; font-weight: 700; color: #0f172a;">${esc(item.materialCode || item.code || item.id || `MAT-${idx + 1}`)}</td>
-        <td style="padding: 10px 12px; font-weight: 600; color: #1e293b;">${esc(item.materialName || item.name || item.nama || 'Pupuk NPK')}</td>
-        <td style="padding: 10px 12px; color: #475569;">${esc(item.category || 'Pupuk & Bahan Kimia')}</td>
-        <td style="padding: 10px 12px; color: #334155;">${esc(item.unit || 'Kg')}</td>
-        <td style="padding: 10px 12px; text-align: right; color: #475569;">${(parseTxNumericQty(item.initialStock || 0)).toLocaleString('id-ID')}</td>
-        <td style="padding: 10px 12px; text-align: right; font-weight: 600; color: #15803d;">+${(parseTxNumericQty(item.qtyIn || 0)).toLocaleString('id-ID')}</td>
-        <td style="padding: 10px 12px; text-align: right; font-weight: 600; color: #b91c1c;">-${(parseTxNumericQty(item.qtyOut || 0)).toLocaleString('id-ID')}</td>
-        <td style="padding: 10px 12px; text-align: right; font-weight: 800; color: #0f172a;">${(parseTxNumericQty(item.currentStock || item.stock || 0)).toLocaleString('id-ID')}</td>
-        <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(item.status || 'TERSEDIA')}</td>
+        <td style="padding: 10px 12px; font-weight: 700; color: #0f172a; font-family: monospace; font-size: 0.8rem;">${esc(itemCode)}</td>
+        <td style="padding: 10px 12px; font-weight: 600; color: #1e293b;">${esc(itemName)}</td>
+        <td style="padding: 10px 12px; font-weight: 600; color: #0284c7; font-size: 0.8rem;">${esc(noIssue)}</td>
+        <td style="padding: 10px 12px; color: #475569; font-size: 0.78rem;">${esc(alokasi)}</td>
+        <td style="padding: 10px 12px; text-align: center; color: #334155; font-weight: 600; font-size: 0.78rem;">${esc(uom)}</td>
+        <td style="padding: 10px 12px; text-align: right; font-weight: 600; color: #1e293b;">${qtyIssue.toLocaleString('id-ID')}</td>
+        <td style="padding: 10px 12px; text-align: right; font-weight: 600; color: #b91c1c;">${usedQty.toLocaleString('id-ID')}</td>
+        <td style="padding: 10px 12px; text-align: right; font-weight: 800; color: #15803d;">${remQty.toLocaleString('id-ID')}</td>
+        <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(item.status || 'AVAILABLE')}</td>
         <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(idx)}</td>
       </tr>
-    `).join('');
+      `;
+    }).join('');
   } else if (modId === 'request') {
     theadHtml = `
       <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569;">
@@ -2802,6 +3587,272 @@ function renderDynamicTxTable(modId, curMod, list) {
       </tr>
     `;
     }).join('');
+  } else if (modId === 'dispatch') {
+    theadHtml = `
+      <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569;">
+        <th style="padding: 10px 12px; width: 40px;">#</th>
+        <th style="padding: 10px 12px;">No. Dokumen / Dispatch</th>
+        <th style="padding: 10px 12px;">Tanggal Kirim</th>
+        <th style="padding: 10px 12px;">Ref. Dokumen SPB</th>
+        <th style="padding: 10px 12px;">Tujuan Pengiriman</th>
+        <th style="padding: 10px 12px;">Klon Bibit</th>
+        <th style="padding: 10px 12px; text-align: right;">Jumlah Kirim</th>
+        <th style="padding: 10px 12px;">Kendaraan / Nopol</th>
+        <th style="padding: 10px 12px;">Petugas Pengirim</th>
+        <th style="padding: 10px 12px; text-align: center;">Status</th>
+        <th style="padding: 10px 12px; text-align: center; width: 60px;">Aksi</th>
+      </tr>
+    `;
+    tbodyHtml = list.map((item, idx) => {
+      const itemUnit = getTxItemUnit(item, 'dispatch');
+      const numKirim = parseTxNumericQty(item.qtyKirim !== undefined ? item.qtyKirim : (item.issuedQty !== undefined ? item.issuedQty : (item.qty || 0)));
+      return `
+      <tr style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease;">
+        <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+        <td style="padding: 10px 12px; font-weight: 700; color: #0f172a;">${esc(item.docNo || item.dispatchNo || formatStandardDocNo(2026, 'DSP', idx + 1))}</td>
+        <td style="padding: 10px 12px; color: #334155;">${esc(item.tanggal || item.issuedDate || todayISO())}</td>
+        <td style="padding: 10px 12px; font-size: 0.72rem; color: #475569;">${esc(item.parentRequestDocNo || item.requestDocNo || '-')}</td>
+        <td style="padding: 10px 12px; font-weight: 600; color: #1e293b;">${esc(item.targetDivision || item.targetDivisionName || 'Divisi II')}</td>
+        <td style="padding: 10px 12px; font-weight: 700; color: #116834;">${esc(item.klon || item.clone || 'PB 260')}</td>
+        <td style="padding: 10px 12px; text-align: right; font-weight: 800; color: #15803d;">${numKirim.toLocaleString('id-ID')} ${esc(itemUnit)}</td>
+        <td style="padding: 10px 12px; color: #475569;">${esc(item.vehiclePlate || item.nopol || '-')}</td>
+        <td style="padding: 10px 12px; color: #475569;">${esc(item.issuedByName || item.petugas || 'Mantri Bibitan')}</td>
+        <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(item.status || 'COMPLETED')}</td>
+        <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(idx)}</td>
+      </tr>
+    `;
+    }).join('');
+  } else if (modId === 'destruction') {
+    theadHtml = `
+      <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569;">
+        <th style="padding: 10px 12px; width: 40px;">#</th>
+        <th style="padding: 10px 12px;">No. Berita Acara (BA)</th>
+        <th style="padding: 10px 12px;">Tanggal Pemusnahan</th>
+        <th style="padding: 10px 12px;">Ref. Seleksi / Batch</th>
+        <th style="padding: 10px 12px;">No. Bedengan</th>
+        <th style="padding: 10px 12px;">Klon Bibit</th>
+        <th style="padding: 10px 12px; text-align: right;">Jlh Dimusnahkan</th>
+        <th style="padding: 10px 12px;">Alasan Pemusnahan</th>
+        <th style="padding: 10px 12px;">Petugas Pelaksana</th>
+        <th style="padding: 10px 12px; text-align: center;">Status</th>
+        <th style="padding: 10px 12px; text-align: center; width: 60px;">Aksi</th>
+      </tr>
+    `;
+    tbodyHtml = list.map((item, idx) => {
+      const itemUnit = getTxItemUnit(item, 'destruction');
+      const numCull = parseTxNumericQty(item.qty !== undefined ? item.qty : (item.destructionQty !== undefined ? item.destructionQty : 0));
+      return `
+      <tr style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease;">
+        <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+        <td style="padding: 10px 12px; font-weight: 700; color: #0f172a;">${esc(item.docNo || item.destructionNo || formatStandardDocNo(2026, 'CUL', idx + 1))}</td>
+        <td style="padding: 10px 12px; color: #334155;">${esc(item.tanggal || item.tanggalPemusnahan || todayISO())}</td>
+        <td style="padding: 10px 12px; font-size: 0.72rem; color: #475569;">${esc(item.sourceSelectionNo || item.batchCode || '-')}</td>
+        <td style="padding: 10px 12px; font-weight: 700; color: #111827;">${esc(item.bedengan || item.bedenganCode || 'Bedengan 01')}</td>
+        <td style="padding: 10px 12px; font-weight: 600; color: #334155;">${esc(item.klon || 'GT 1')}</td>
+        <td style="padding: 10px 12px; text-align: right; font-weight: 700; color: #b91c1c;">${numCull.toLocaleString('id-ID')} ${esc(itemUnit)}</td>
+        <td style="padding: 10px 12px; font-size: 0.75rem; font-weight: 600; color: #7f1d1d;">${esc(item.reason || item.alasan || 'AFKIR')}</td>
+        <td style="padding: 10px 12px; color: #475569;">${esc(item.createdByName || item.petugas || 'Mantri Bibitan')}</td>
+        <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(item.status || 'MENUNGGU_VERIFIKASI')}</td>
+        <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(idx)}</td>
+      </tr>
+    `;
+    }).join('');
+  } else if (modId === 'mandoranConsolidation') {
+    if (txConsolidationViewMode === 'WORKER') {
+      const flattenedRows = [];
+      list.forEach((doc, docIdx) => {
+        const workers = Array.isArray(doc.workers) ? doc.workers : (Array.isArray(doc.pekerja) ? doc.pekerja : []);
+        const uom = doc.uom || 'Pkk';
+        const targetBasis = parseTxNumericQty(doc.taskQuantity || 0);
+        if (workers.length === 0) {
+          flattenedRows.push({
+            doc,
+            docIdx,
+            worker: { name: 'Belum ada pekerja', code: '-', inputHasil: 0, resultType: '-', potongJamDecision: '-' },
+            uom,
+            targetBasis
+          });
+        } else {
+          workers.forEach((w) => {
+            flattenedRows.push({
+              doc,
+              docIdx,
+              worker: w,
+              uom: w.uom || uom,
+              targetBasis: parseTxNumericQty(w.taskQuantity !== undefined ? w.taskQuantity : targetBasis)
+            });
+          });
+        }
+      });
+
+      theadHtml = `
+        <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569; font-size: 0.74rem; text-transform: uppercase;">
+          <th style="padding: 10px 12px; width: 40px;">#</th>
+          <th style="padding: 10px 12px;">ID / No. Konsolidasi</th>
+          <th style="padding: 10px 12px;">Tanggal</th>
+          <th style="padding: 10px 12px;">Alokasi Kegiatan</th>
+          <th style="padding: 10px 12px;">Work Group Role Code</th>
+          <th style="padding: 10px 12px;">Nama Pekerja</th>
+          <th style="padding: 10px 12px;">NIK / Kode</th>
+          <th style="padding: 10px 12px;">Peran Pekerja</th>
+          <th style="padding: 10px 12px; text-align: right;">Target Basis</th>
+          <th style="padding: 10px 12px; text-align: right;">Realisasi Hasil</th>
+          <th style="padding: 10px 12px; text-align: right;">Selisih Basis</th>
+          <th style="padding: 10px 12px; text-align: center;">Potong Jam / Status</th>
+          <th style="padding: 10px 12px;">Created By</th>
+          <th style="padding: 10px 12px; text-align: center;">Status</th>
+          <th style="padding: 10px 12px; text-align: center; width: 60px;">Aksi</th>
+        </tr>
+      `;
+
+      tbodyHtml = flattenedRows.map((row, idx) => {
+        const { doc, docIdx, worker: w, uom, targetBasis } = row;
+        const inputVal = parseTxNumericQty(w.inputHasil !== undefined ? w.inputHasil : (w.total || 0));
+        const selisih = inputVal - targetBasis;
+        const selisihHtml = targetBasis > 0
+          ? (selisih >= 0
+              ? `<span style="color: #15803d; font-weight: 700;">+${selisih.toLocaleString('id-ID')} ${esc(uom)}</span>`
+              : `<span style="color: #b91c1c; font-weight: 700;">${selisih.toLocaleString('id-ID')} ${esc(uom)}</span>`)
+          : '<span style="color: #94a3b8;">-</span>';
+
+        const potongHtml = w.potongJamDecision === 'POTONG'
+          ? `<span style="display: inline-block; font-size: 0.70rem; font-weight: 700; background: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 4px; border: 1px solid #fca5a5;">Potong Jam (${esc(w.potongJamReason || '-')})</span>`
+          : `<span style="display: inline-block; font-size: 0.70rem; font-weight: 700; background: #f0fdf4; color: #15803d; padding: 2px 6px; border-radius: 4px; border: 1px solid #bbf7d0;">Lengkap</span>`;
+
+        return `
+          <tr class="tx-table-row-clickable" data-idx="${docIdx}" data-docno="${esc(doc.docNo || '')}" style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease; cursor: pointer;">
+            <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+            <td style="padding: 10px 12px; font-weight: 700; color: #0284c7; font-family: monospace; font-size: 0.8rem;">${esc(doc.docNo || `CSL-${docIdx + 1}`)}</td>
+            <td style="padding: 10px 12px; color: #64748b; font-size: 0.78rem;">${esc(doc.tanggal || '-')}</td>
+            <td style="padding: 10px 12px; font-size: 0.8rem; color: #0f172a;">
+              ${doc.allocationCode && doc.allocationCode !== '-' ? `
+                <strong>${esc(doc.allocationCode)}</strong><br>
+                <span style="color: #475569; font-size: 0.74rem;">${esc(doc.allocationName || doc.alokasi)}</span>
+              ` : `
+                <strong>${esc(doc.allocationName || doc.alokasi || '-')}</strong>
+              `}
+            </td>
+            <td style="padding: 10px 12px; font-family: monospace; font-size: 0.76rem; font-weight: 700; color: #0369a1;">
+              ${esc(doc.workGroupRoleCode || doc.roleCode || '-')}
+            </td>
+            <td style="padding: 10px 12px; font-weight: 700; color: #0f172a; font-size: 0.82rem;">${esc(w.name || w.workerName || 'Pekerja')}</td>
+            <td style="padding: 10px 12px; font-family: monospace; font-size: 0.75rem; color: #64748b;">${esc(w.code || w.workerCode || '-')}</td>
+            <td style="padding: 10px 12px; color: #475569; font-size: 0.76rem;">${esc(w.position || doc.roleName || 'Pekerja Bibitan')}</td>
+            <td style="padding: 10px 12px; text-align: right; color: #64748b; font-size: 0.78rem;">
+              ${targetBasis > 0 ? `${targetBasis.toLocaleString('id-ID')} ${esc(uom)}` : '<span style="color:#94a3b8;">-</span>'}
+            </td>
+            <td style="padding: 10px 12px; text-align: right; font-weight: 800; color: #15803d; font-size: 0.84rem;">
+              ${inputVal.toLocaleString('id-ID')} ${esc(uom)}
+            </td>
+            <td style="padding: 10px 12px; text-align: right; font-size: 0.76rem;">${selisihHtml}</td>
+            <td style="padding: 10px 12px; text-align: center;">${potongHtml}</td>
+            <td style="padding: 10px 12px; font-size: 0.78rem; color: #1e293b; white-space: nowrap;">
+              <strong>${esc(doc.createdByName || 'Wagiman')}</strong><br>
+              <span style="display: inline-block; font-size: 0.68rem; font-weight: 700; color: #0284c7; background: #f0f9ff; border: 1px solid #bae6fd; padding: 1px 6px; border-radius: 4px; margin-top: 2px;">
+                ${esc(doc.createdByRole || 'Mantri Bibitan')}
+              </span>
+            </td>
+            <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(doc.status || 'CONSOLIDATED')}</td>
+            <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(docIdx, doc.docNo)}</td>
+          </tr>
+        `;
+      }).join('');
+    } else {
+      // DOC SUMMARY VIEW (Per Alokasi Kegiatan)
+      theadHtml = `
+        <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569; font-size: 0.74rem; text-transform: uppercase;">
+          <th style="padding: 10px 12px; width: 40px;">#</th>
+          <th style="padding: 10px 12px;">ID / No. Konsolidasi</th>
+          <th style="padding: 10px 12px;">Tanggal Konsolidasi</th>
+          <th style="padding: 10px 12px;">Alokasi Kegiatan</th>
+          <th style="padding: 10px 12px;">Work Group Role Code</th>
+          <th style="padding: 10px 12px;">Peran Pekerja</th>
+          <th style="padding: 10px 12px; text-align: center;">Jumlah Tenaga Kerja</th>
+          <th style="padding: 10px 12px;">Rincian Pekerja & Hasil</th>
+          <th style="padding: 10px 12px; text-align: right;">Target Basis</th>
+          <th style="padding: 10px 12px; text-align: right;">Total Hasil Kerja</th>
+          <th style="padding: 10px 12px; text-align: center;">Satuan</th>
+          <th style="padding: 10px 12px; text-align: center;">Dokumen Sumber</th>
+          <th style="padding: 10px 12px;">Created By</th>
+          <th style="padding: 10px 12px; text-align: center;">Status</th>
+          <th style="padding: 10px 12px; text-align: center; width: 60px;">Aksi</th>
+        </tr>
+      `;
+
+      tbodyHtml = list.map((item, idx) => {
+        const docNo = item.docNo || item.id || `CSL-${idx + 1}`;
+        const alokasi = item.alokasi || '-';
+        const roleName = item.roleName || '-';
+        const workerCount = Number(item.workerCount || (item.workers ? item.workers.length : 0));
+        const totalHasil = parseTxNumericQty(item.totalHasil || 0);
+        const uom = item.uom || 'Pkk';
+        const targetBasis = parseTxNumericQty(item.taskQuantity || 0);
+        const sourceCount = Number(item.sourceCount || (item.sourceTransactionIds ? item.sourceTransactionIds.length : 0));
+        const wList = Array.isArray(item.workers) ? item.workers : [];
+
+        let workerSummaryHtml = '';
+        if (wList.length === 0) {
+          workerSummaryHtml = `<span style="color: #94a3b8; font-size: 0.74rem;">Tidak ada pekerja</span>`;
+        } else {
+          workerSummaryHtml = `
+            <div style="display: flex; flex-direction: column; gap: 3px; max-width: 250px;">
+              ${wList.slice(0, 2).map(w => {
+                const wVal = parseTxNumericQty(w.inputHasil !== undefined ? w.inputHasil : (w.total || 0));
+                return `
+                  <div style="font-size: 0.74rem; color: #334155; display: flex; justify-content: space-between; gap: 8px;">
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong>${esc(w.name || w.workerName)}</strong></span>
+                    <strong style="color: #15803d; white-space: nowrap;">${wVal.toLocaleString('id-ID')} ${esc(uom)}</strong>
+                  </div>
+                `;
+              }).join('')}
+              ${wList.length > 2 ? `<span style="font-size: 0.70rem; color: #64748b; font-style: italic;">+${wList.length - 2} pekerja lainnya...</span>` : ''}
+            </div>
+          `;
+        }
+
+        return `
+          <tr class="tx-table-row-clickable" data-idx="${idx}" data-docno="${esc(docNo)}" style="border-bottom: 1px solid #f1f5f9; transition: background 0.1s ease; cursor: pointer;">
+            <td style="padding: 10px 12px; color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+            <td style="padding: 10px 12px; font-weight: 700; color: #0284c7; font-family: monospace; font-size: 0.8rem;">${esc(docNo)}</td>
+            <td style="padding: 10px 12px; color: #64748b; font-size: 0.78rem;">${esc(item.tanggal || '-')}</td>
+            <td style="padding: 10px 12px; font-size: 0.82rem; color: #0f172a;">
+              ${item.allocationCode && item.allocationCode !== '-' ? `
+                <strong>${esc(item.allocationCode)}</strong><br>
+                <span style="color: #475569; font-size: 0.74rem;">${esc(item.allocationName || alokasi)}</span>
+              ` : `
+                <strong>${esc(item.allocationName || alokasi || '-')}</strong>
+              `}
+            </td>
+            <td style="padding: 10px 12px; font-family: monospace; font-size: 0.78rem; font-weight: 700; color: #0369a1;">
+              ${esc(item.workGroupRoleCode || item.roleCode || '-')}
+            </td>
+            <td style="padding: 10px 12px; color: #475569; font-size: 0.78rem;">${esc(roleName)}</td>
+            <td style="padding: 10px 12px; text-align: center; font-weight: 700; color: #0f172a;">
+              <span style="display: inline-block; background: #eff6ff; color: #1d4ed8; padding: 2px 8px; border-radius: 999px; font-size: 0.74rem; font-weight: 700; border: 1px solid #bfdbfe;">
+                ${workerCount} Orang
+              </span>
+            </td>
+            <td style="padding: 10px 12px;">${workerSummaryHtml}</td>
+            <td style="padding: 10px 12px; text-align: right; color: #64748b; font-size: 0.78rem;">
+              ${targetBasis > 0 ? `${targetBasis.toLocaleString('id-ID')} ${esc(uom)}` : '<span style="color:#94a3b8;">-</span>'}
+            </td>
+            <td style="padding: 10px 12px; text-align: right; font-weight: 800; color: #15803d; font-size: 0.88rem;">${totalHasil.toLocaleString('id-ID')}</td>
+            <td style="padding: 10px 12px; text-align: center; color: #334155; font-weight: 700; font-size: 0.78rem;">${esc(uom)}</td>
+            <td style="padding: 10px 12px; text-align: center; font-size: 0.75rem; color: #0284c7; font-weight: 600;">
+              ${sourceCount > 0 ? `${sourceCount} Transaksi` : '-'}
+            </td>
+            <td style="padding: 10px 12px; font-size: 0.78rem; color: #1e293b; white-space: nowrap;">
+              <strong>${esc(item.createdByName || 'Wagiman')}</strong><br>
+              <span style="display: inline-block; font-size: 0.68rem; font-weight: 700; color: #0284c7; background: #f0f9ff; border: 1px solid #bae6fd; padding: 1px 6px; border-radius: 4px; margin-top: 2px;">
+                ${esc(item.createdByRole || 'Mantri Bibitan')}
+              </span>
+            </td>
+            <td style="padding: 10px 12px; text-align: center;">${getTxStatusBadge(item.status || 'CONSOLIDATED')}</td>
+            <td style="padding: 10px 12px; text-align: center;">${getTxCrudButtons(idx, docNo)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
   } else if (modId === 'syncQueue') {
     theadHtml = `
       <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left; color: #475569;">
@@ -2875,6 +3926,33 @@ function attachTransactionsWorkspaceEvents(container) {
   const statusSelect = container.querySelector('#tx-filter-status');
   statusSelect?.addEventListener('change', (e) => {
     txStatusFilter = e.target.value;
+    renderReviewPanel();
+  });
+
+  // Mode Fitur Rekam Pemeliharaan Filter
+  const actModeSelect = container.querySelector('#tx-filter-activity-mode');
+  actModeSelect?.addEventListener('change', (e) => {
+    txActivityModeFilter = e.target.value;
+    renderReviewPanel();
+  });
+
+  // Toggle View Mode (Dokumen vs Rincian Pekerja) Rekam Pemeliharaan
+  container.querySelector('#btn-toggle-view-doc')?.addEventListener('click', () => {
+    txActivityViewMode = 'DOC';
+    renderReviewPanel();
+  });
+  container.querySelector('#btn-toggle-view-worker')?.addEventListener('click', () => {
+    txActivityViewMode = 'WORKER';
+    renderReviewPanel();
+  });
+
+  // Toggle View Mode Konsolidasi Mandoran (Ringkasan per Alokasi vs Rincian per Alokasi -> Pekerja)
+  container.querySelector('#btn-toggle-consol-doc')?.addEventListener('click', () => {
+    txConsolidationViewMode = 'DOC';
+    renderReviewPanel();
+  });
+  container.querySelector('#btn-toggle-consol-worker')?.addEventListener('click', () => {
+    txConsolidationViewMode = 'WORKER';
     renderReviewPanel();
   });
 
@@ -3016,9 +4094,25 @@ function attachTransactionsWorkspaceEvents(container) {
       e.stopPropagation();
       container.querySelectorAll('.tx-action-dropdown').forEach((m) => (m.style.display = 'none'));
       const idx = parseInt(btn.dataset.idx, 10);
+      const docNo = btn.dataset.docno;
       const list = loadTxList(activeTxTab);
-      if (list[idx]) {
-        openTxDetailModal(list[idx], activeTxTab, idx);
+      const item = docNo ? (list.find(it => (it.docNo && it.docNo === docNo) || (it.id && it.id === docNo)) || list[idx]) : list[idx];
+      if (item) {
+        openTxDetailModal(item, activeTxTab, idx);
+      }
+    });
+  });
+
+  // Klik Baris Tabel untuk Buka Detail
+  container.querySelectorAll('.tx-table-row-clickable').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.btn-tx-action-trigger') || e.target.closest('.tx-action-dropdown') || e.target.closest('button')) return;
+      const idx = parseInt(row.dataset.idx, 10);
+      const docNo = row.dataset.docno;
+      const list = loadTxList(activeTxTab);
+      const item = docNo ? (list.find(it => (it.docNo && it.docNo === docNo) || (it.id && it.id === docNo)) || list[idx]) : list[idx];
+      if (item) {
+        openTxDetailModal(item, activeTxTab, idx);
       }
     });
   });
@@ -3050,6 +4144,9 @@ function openTxFormModal(item, modId, editIndex = null) {
             <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Status Transaksi</label>
             <select class="feedback-form-select" id="tx-input-status">
               <option value="SUBMITTED" ${status === 'SUBMITTED' ? 'selected' : ''}>SUBMITTED</option>
+              <option value="AVAILABLE" ${status === 'AVAILABLE' ? 'selected' : ''}>AVAILABLE</option>
+              <option value="PARTIALLY_USED" ${status === 'PARTIALLY_USED' ? 'selected' : ''}>PARTIALLY_USED</option>
+              <option value="FULLY_USED" ${status === 'FULLY_USED' ? 'selected' : ''}>FULLY_USED</option>
               <option value="APPROVED" ${status === 'APPROVED' ? 'selected' : ''}>APPROVED</option>
               <option value="VERIFIED" ${status === 'VERIFIED' ? 'selected' : ''}>VERIFIED</option>
               <option value="COMPLETED" ${status === 'COMPLETED' ? 'selected' : ''}>COMPLETED</option>
@@ -3087,6 +4184,11 @@ function openTxFormModal(item, modId, editIndex = null) {
     payload.tanggal = root.querySelector('#tx-input-date')?.value || todayISO();
     payload.status = root.querySelector('#tx-input-status')?.value || 'SUBMITTED';
     payload.notes = root.querySelector('#tx-input-notes')?.value || '';
+
+    const creatorInfo = resolveTxCreatorInfo(isEdit ? item : null);
+    payload.createdByName = isEdit ? (item.createdByName || creatorInfo.name) : creatorInfo.name;
+    payload.createdByRole = isEdit ? (item.createdByRole || creatorInfo.role) : creatorInfo.role;
+    payload.createdBy = isEdit ? (item.createdBy || creatorInfo.display) : creatorInfo.display;
 
     const list = loadTxList(modId);
     if (isEdit) {
@@ -3158,6 +4260,513 @@ function openTxDeleteConfirm(item, modId, index) {
 
 function openTxDetailModal(item, modId, index) {
   const cfg = TX_MODULES[modId];
+
+  if (modId === 'material') {
+    const docNo = item.noIssue || item.docNo || item.id || '-';
+    const itemCode = item.itemCode || '-';
+    const itemName = item.itemName || item.materialName || '-';
+    const uom = item.uom || item.unit || 'Unit';
+    const alokasi = item.alokasi || '-';
+    const qtyIssue = parseTxNumericQty(item.quantityIssue || 0);
+    const usedQty = parseTxNumericQty(item.usedQuantity || 0);
+    const remQty = parseTxNumericQty(item.remainingQuantity !== undefined ? item.remainingQuantity : Math.max(0, qtyIssue - usedQty));
+
+    // Ambil rekam pemakaian terpadu (operasional SOW/APR + manual)
+    const allRecords = typeof getUnifiedMaterialRecords === 'function' ? getUnifiedMaterialRecords() : [];
+    const matchedRecords = allRecords.filter(r => 
+      (r.issueDocNo && (r.issueDocNo === docNo || r.issueDocNo === item.id)) ||
+      (r.rawRecord && (r.rawRecord.issueDocNo === docNo || r.rawRecord.noIssue === docNo || r.rawRecord.sir === docNo))
+    );
+
+    // Relasi dokumen transaksi tambahan
+    const directDocRefs = (typeof getIssueUsageTransactions === 'function' ? getIssueUsageTransactions(docNo) : []) || [];
+
+    const usageRowsHtml = matchedRecords.length > 0
+      ? matchedRecords.map((r, i) => `
+          <tr style="border-bottom: 1px solid #f1f5f9; font-size: 0.78rem;">
+            <td style="padding: 8px 10px; color: #64748b; font-weight: 600;">${i + 1}</td>
+            <td style="padding: 8px 10px; font-weight: 700; color: #0284c7;">${esc(r.docNo || '-')}</td>
+            <td style="padding: 8px 10px; color: #334155;">
+              <span style="display: inline-block; font-size: 0.68rem; font-weight: 700; background: #f1f5f9; color: #475569; padding: 2px 6px; border-radius: 4px;">
+                ${esc(r.sourceLabel || r.sourceModule || 'Operasional')}
+              </span>
+            </td>
+            <td style="padding: 8px 10px; color: #64748b;">${esc(r.tanggal || '-')}</td>
+            <td style="padding: 8px 10px; text-align: right; font-weight: 700; color: #b91c1c;">
+              ${parseTxNumericQty(r.quantity || 0).toLocaleString('id-ID')} ${esc(r.uom || uom)}
+            </td>
+            <td style="padding: 8px 10px; color: #475569;">${esc(r.actor || '-')}</td>
+            <td style="padding: 8px 10px; color: #64748b; font-size: 0.74rem;">${esc(r.notes || '-')}</td>
+          </tr>
+        `).join('')
+      : directDocRefs.length > 0
+        ? directDocRefs.map((d, i) => `
+            <tr style="border-bottom: 1px solid #f1f5f9; font-size: 0.78rem;">
+              <td style="padding: 8px 10px; color: #64748b; font-weight: 600;">${i + 1}</td>
+              <td style="padding: 8px 10px; font-weight: 700; color: #0284c7;">${esc(d.docNo || '-')}</td>
+              <td style="padding: 8px 10px; color: #334155;">
+                <span style="display: inline-block; font-size: 0.68rem; font-weight: 700; background: #eff6ff; color: #1d4ed8; padding: 2px 6px; border-radius: 4px;">
+                  Operasional
+                </span>
+              </td>
+              <td style="padding: 8px 10px; color: #64748b;">${esc(d.tanggal || '-')}</td>
+              <td style="padding: 8px 10px; text-align: right; font-weight: 700; color: #b91c1c;">-</td>
+              <td style="padding: 8px 10px; color: #475569;">Mantri Bibitan</td>
+              <td style="padding: 8px 10px; color: #64748b; font-size: 0.74rem;">Penggunaan Dokumen Alokasi</td>
+            </tr>
+          `).join('')
+        : `
+            <tr>
+              <td colspan="7" style="padding: 24px; text-align: center; color: #64748b; font-size: 0.8rem; background: #f8fafc;">
+                <svg viewBox="0 0 24 24" width="24" height="24" stroke="#94a3b8" stroke-width="1.8" fill="none" style="margin: 0 auto 6px; display: block;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                Belum ada transaksi operasional yang menggunakan dokumen issue ini.<br>
+                <span style="color: #15803d; font-weight: 600;">Saldo stok masih utuh 100% (${qtyIssue.toLocaleString('id-ID')} ${esc(uom)}).</span>
+              </td>
+            </tr>
+          `;
+
+    openModal({
+      title: `Detail Dokumen Issue & Riwayat Pemakaian`,
+      body: `
+        <div style="display: flex; flex-direction: column; gap: 14px; max-height: 70vh; overflow-y: auto;">
+          <!-- HERO CARD -->
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+              <div>
+                <span style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.04em;">No. Dokumen Issue</span>
+                <h3 style="margin: 2px 0 0; font-size: 1.15rem; font-weight: 800; color: #0284c7;">${esc(docNo)}</h3>
+              </div>
+              <div>${getTxStatusBadge(item.status || 'AVAILABLE')}</div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.82rem;">
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Material & Bahan:</span><br>
+                <strong style="color: #0f172a;">${esc(itemName)}</strong> <span style="font-family: monospace; font-size: 0.75rem; color: #64748b;">(${esc(itemCode)})</span>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Alokasi Biaya:</span><br>
+                <strong style="color: #334155;">${esc(alokasi)}</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Satuan (UOM):</span><br>
+                <strong style="color: #334155;">${esc(uom)}</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Tanggal Dokumen:</span><br>
+                <strong style="color: #334155;">${esc(item.tanggal || '-')}</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- SALDO METRIC CARDS -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+            <div style="background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #475569; text-transform: uppercase;">Issue Gudang</div>
+              <div style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin-top: 2px;">${qtyIssue.toLocaleString('id-ID')}</div>
+              <div style="font-size: 0.7rem; color: #64748b;">${esc(uom)}</div>
+            </div>
+            <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #b91c1c; text-transform: uppercase;">Total Terpakai</div>
+              <div style="font-size: 1.1rem; font-weight: 800; color: #b91c1c; margin-top: 2px;">${usedQty.toLocaleString('id-ID')}</div>
+              <div style="font-size: 0.7rem; color: #991b1b;">${esc(uom)}</div>
+            </div>
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #15803d; text-transform: uppercase;">Sisa Saldo Stok</div>
+              <div style="font-size: 1.1rem; font-weight: 800; color: #15803d; margin-top: 2px;">${remQty.toLocaleString('id-ID')}</div>
+              <div style="font-size: 0.7rem; color: #166534;">${esc(uom)}</div>
+            </div>
+          </div>
+
+          <!-- DETAIL RIWAYAT PEMAKAIAN -->
+          <div>
+            <h4 style="margin: 8px 0 8px; font-size: 0.85rem; font-weight: 700; color: #1e293b; display: flex; align-items: center; gap: 6px;">
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              Riwayat Transaksi Pemakaian Terkait (${matchedRecords.length || directDocRefs.length} Transaksi)
+            </h4>
+            <div style="border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
+              <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <thead style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 0.72rem; color: #475569; text-transform: uppercase;">
+                  <tr>
+                    <th style="padding: 8px 10px; width: 30px;">#</th>
+                    <th style="padding: 8px 10px;">No. Transaksi</th>
+                    <th style="padding: 8px 10px;">Sumber</th>
+                    <th style="padding: 8px 10px;">Tanggal</th>
+                    <th style="padding: 8px 10px; text-align: right;">Jumlah Terpakai</th>
+                    <th style="padding: 8px 10px;">Petugas</th>
+                    <th style="padding: 8px 10px;">Keterangan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${usageRowsHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `,
+      footer: `
+        <button class="btn btn-primary" data-detail-close>Tutup</button>
+      `
+    });
+
+    const root = document.getElementById('modal-root');
+    root.querySelector('[data-detail-close]')?.addEventListener('click', closeModal);
+    return;
+  }
+
+  if (modId === 'mandoranConsolidation') {
+    const docNo = item.docNo || item.id || '-';
+    const rawConsolidations = storage.get('nursery_mandoran_consolidations', []) || [];
+    const parentDoc = rawConsolidations.find(c => (c.docNo && c.docNo === docNo) || (c.id && c.id === item.rawConsolidationId) || (c.id && c.id === docNo)) || item;
+    const groups = Array.isArray(parentDoc.groups) && parentDoc.groups.length > 0
+      ? parentDoc.groups
+      : (Array.isArray(item.groups) && item.groups.length > 0
+          ? item.groups
+          : [{
+              allocationCode: item.allocationCode || '-',
+              allocationName: item.allocationName || item.alokasi || 'Pemeliharaan Bibitan',
+              workGroupRoleName: item.roleName || 'Pekerja Bibitan',
+              uom: item.uom || 'Pkk',
+              taskQuantity: item.taskQuantity || 0,
+              workers: Array.isArray(item.workers) ? item.workers : (Array.isArray(item.pekerja) ? item.pekerja : [])
+            }]);
+
+    const totalDocWorkers = groups.reduce((sum, g) => sum + (g.workers ? g.workers.length : 0), 0);
+    const sourceIds = Array.isArray(parentDoc.sourceTransactionIds) ? parentDoc.sourceTransactionIds : (item.sourceTransactionIds || []);
+    const mandorName = parentDoc.actor?.name || parentDoc.createdByName || item.mandor || 'Wagiman';
+    const tanggalDoc = parentDoc.createdAt ? parentDoc.createdAt.slice(0, 10) : (item.tanggal || todayISO());
+
+    // Generate HTML section per Alokasi Kegiatan
+    const allocationSectionsHtml = groups.map((g, gIdx) => {
+      const gCode = g.allocationCode || '-';
+      const gName = g.allocationName || g.workGroupRoleName || '-';
+      const gRole = g.workGroupRoleName || g.roleName || 'Pekerja Bibitan';
+      const gUom = g.uom || 'Pkk';
+      const gTargetBasis = parseTxNumericQty(g.taskQuantity || 0);
+      const wList = Array.isArray(g.workers) ? g.workers : [];
+      const gTotalHasil = wList.reduce((s, w) => s + (Number(w.inputHasil !== undefined ? w.inputHasil : (w.total || 0)) || 0), 0);
+
+      const workerRowsHtml = wList.length > 0
+        ? wList.map((w, wIdx) => {
+            const inputVal = parseTxNumericQty(w.inputHasil !== undefined ? w.inputHasil : (w.total || 0));
+            const wTarget = parseTxNumericQty(w.taskQuantity !== undefined ? w.taskQuantity : gTargetBasis);
+            const selisih = inputVal - wTarget;
+            const selisihHtml = wTarget > 0
+              ? (selisih >= 0
+                  ? `<span style="color: #15803d; font-weight: 700;">+${selisih.toLocaleString('id-ID')} ${esc(gUom)}</span>`
+                  : `<span style="color: #b91c1c; font-weight: 700;">${selisih.toLocaleString('id-ID')} ${esc(gUom)}</span>`)
+              : '<span style="color: #64748b;">-</span>';
+
+            const potongHtml = w.potongJamDecision === 'POTONG'
+              ? `<span style="color: #b91c1c; font-weight: 700; background: #fee2e2; padding: 2px 6px; border-radius: 4px; border: 1px solid #fca5a5;">Potong Jam (${esc(w.potongJamReason || '-')})</span>`
+              : `<span style="color: #15803d; font-weight: 700; background: #f0fdf4; padding: 2px 6px; border-radius: 4px; border: 1px solid #bbf7d0;">Lengkap</span>`;
+
+            return `
+              <tr style="border-bottom: 1px solid #f1f5f9; font-size: 0.78rem;">
+                <td style="padding: 8px 10px; color: #64748b; font-weight: 600;">${wIdx + 1}</td>
+                <td style="padding: 8px 10px; font-weight: 700; color: #0f172a;">${esc(w.name || w.workerName || 'Pekerja')}</td>
+                <td style="padding: 8px 10px; font-family: monospace; color: #64748b; font-size: 0.74rem;">${esc(w.code || w.workerCode || '-')}</td>
+                <td style="padding: 8px 10px; color: #475569;">${esc(w.resultType || 'TUNTAS')}</td>
+                <td style="padding: 8px 10px; text-align: right; color: #64748b;">
+                  ${wTarget > 0 ? `${wTarget.toLocaleString('id-ID')} ${esc(gUom)}` : '-'}
+                </td>
+                <td style="padding: 8px 10px; text-align: right; font-weight: 800; color: #15803d;">
+                  ${inputVal.toLocaleString('id-ID')} ${esc(gUom)}
+                </td>
+                <td style="padding: 8px 10px; text-align: right; font-size: 0.76rem;">${selisihHtml}</td>
+                <td style="padding: 8px 10px; font-size: 0.74rem;">${potongHtml}</td>
+              </tr>
+            `;
+          }).join('')
+        : `
+          <tr>
+            <td colspan="8" style="padding: 12px; text-align: center; color: #94a3b8; font-size: 0.78rem;">
+              Tidak ada data pekerja pada alokasi ini.
+            </td>
+          </tr>
+        `;
+
+      return `
+        <div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; background: #ffffff; margin-bottom: 12px;">
+          <!-- Sub-Header Alokasi Kegiatan -->
+          <div style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <span style="font-size: 0.68rem; font-weight: 800; text-transform: uppercase; color: #0284c7; background: #e0f2fe; padding: 2px 7px; border-radius: 4px; letter-spacing: 0.02em;">
+                Alokasi ${gIdx + 1} dari ${groups.length}
+              </span>
+              <h4 style="margin: 4px 0 0; font-size: 0.92rem; font-weight: 800; color: #0f172a;">
+                ${esc(gCode)} — ${esc(gName)}
+              </h4>
+              <div style="font-size: 0.74rem; color: #64748b; margin-top: 2px;">
+                Peran: <strong>${esc(gRole)}</strong> • Target Basis: <strong>${gTargetBasis > 0 ? `${gTargetBasis.toLocaleString('id-ID')} ${esc(gUom)}` : '-'}</strong>
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <span style="font-size: 0.70rem; color: #64748b; text-transform: uppercase; font-weight: 700;">Subtotal Hasil Alokasi</span>
+              <div style="font-size: 1.15rem; font-weight: 800; color: #15803d;">
+                ${gTotalHasil.toLocaleString('id-ID')} <span style="font-size: 0.82rem; font-weight: 700;">${esc(gUom)}</span>
+              </div>
+              <span style="font-size: 0.72rem; color: #64748b; font-weight: 600;">${wList.length} Pekerja</span>
+            </div>
+          </div>
+
+          <!-- Tabel Rincian Pekerja -->
+          <table style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead style="background: #ffffff; border-bottom: 1px solid #e2e8f0; font-size: 0.70rem; color: #64748b; text-transform: uppercase;">
+              <tr>
+                <th style="padding: 7px 10px; width: 30px;">#</th>
+                <th style="padding: 7px 10px;">Nama Pekerja</th>
+                <th style="padding: 7px 10px;">NIK / Kode</th>
+                <th style="padding: 7px 10px;">Tipe Hasil</th>
+                <th style="padding: 7px 10px; text-align: right;">Target Basis</th>
+                <th style="padding: 7px 10px; text-align: right;">Realisasi Hasil</th>
+                <th style="padding: 7px 10px; text-align: right;">Selisih Basis</th>
+                <th style="padding: 7px 10px;">Keputusan Potong Jam</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${workerRowsHtml}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }).join('');
+
+    openModal({
+      title: `Detail Transaksi: Konsolidasi Mandoran`,
+      body: `
+        <div style="display: flex; flex-direction: column; gap: 14px; max-height: 75vh; overflow-y: auto;">
+          <!-- HERO CARD -->
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+              <div>
+                <span style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.04em;">No. Dokumen Konsolidasi</span>
+                <h3 style="margin: 2px 0 0; font-size: 1.15rem; font-weight: 800; color: #0284c7;">${esc(docNo)}</h3>
+              </div>
+              <div>${getTxStatusBadge(parentDoc.status || item.status || 'CONSOLIDATED')}</div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.82rem;">
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Jumlah Alokasi Kegiatan:</span><br>
+                <strong style="color: #0f172a;">${groups.length} Alokasi Kegiatan</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Total Tenaga Kerja:</span><br>
+                <strong style="color: #334155;">${totalDocWorkers} Orang Pekerja</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Tanggal Konsolidasi:</span><br>
+                <strong style="color: #334155;">${esc(tanggalDoc)}</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Mandor / Petugas Pelaksana:</span><br>
+                <strong style="color: #334155;">${esc(mandorName)}</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Dibuat Oleh (Created By):</span><br>
+                <strong style="color: #0f172a;">${esc(item.createdByName || parentDoc.createdByName || 'Wagiman')}</strong>
+                <span style="display: inline-block; font-size: 0.68rem; font-weight: 700; color: #0284c7; background: #f0f9ff; border: 1px solid #bae6fd; padding: 1px 6px; border-radius: 4px; margin-left: 4px;">
+                  ${esc(item.createdByRole || parentDoc.createdByRole || 'Mantri Bibitan')}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- RINCIAN PER ALOKASI KEGIATAN & PEKERJA -->
+          <div>
+            <h4 style="margin: 0 0 10px; font-size: 0.86rem; font-weight: 800; color: #1e293b; display: flex; align-items: center; gap: 6px;">
+              <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+              Rincian per Alokasi Kegiatan & Tenaga Kerja (${groups.length} Alokasi, ${totalDocWorkers} Pekerja)
+            </h4>
+            ${allocationSectionsHtml}
+          </div>
+
+          <!-- TRANSAKSI SUMBER -->
+          ${sourceIds.length > 0 ? `
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px;">
+              <span style="font-size: 0.74rem; font-weight: 700; color: #475569;">Referensi Dokumen / ID Transaksi Rekam Pemeliharaan:</span>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
+                ${sourceIds.map(id => `<span style="font-family: monospace; font-size: 0.72rem; background: #ffffff; border: 1px solid #cbd5e1; padding: 2px 7px; border-radius: 4px; color: #0284c7; font-weight: 600;">${esc(id)}</span>`).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `,
+      footer: `
+        <button class="btn btn-primary" data-detail-close>Tutup</button>
+      `
+    });
+
+    const root = document.getElementById('modal-root');
+    root.querySelector('[data-detail-close]')?.addEventListener('click', closeModal);
+    return;
+  }
+
+  if (modId === 'nurseryActivity') {
+    const isMandoran = item.activityEntryMode === 'MANDORAN';
+    const docNo = item.docNo || item.id || '-';
+    const alokasi = item.alokasi || ((item.allocationCode && item.allocationName) ? `${item.allocationCode} — ${item.allocationName}` : (item.allocationName || item.allocationCode || '-'));
+    const program = item.program || item.programCode || 'Main Nursery 2026';
+    const blokBedengan = item.bedengan || (typeof item.lokasiBlok === 'object' ? item.lokasiBlok?.blok : null) || 'Bedengan 01';
+    const roleName = item.workGroupRoleName || (isMandoran ? 'Pekerja Borongan Rawat' : 'Pekerja Harian');
+    const uom = item.uom || 'Pkk';
+    const targetBasis = parseTxNumericQty(item.taskQuantity || 0);
+    const totalHasil = parseTxNumericQty(item.totalHasil !== undefined ? item.totalHasil : (item.volumePkk || 0));
+    const mandor = item.mandor || item.createdByName || 'Wagiman';
+    const pList = Array.isArray(item.pekerja) ? item.pekerja : [];
+
+    const workerRowsHtml = pList.length > 0
+      ? pList.map((w, i) => {
+          const inputVal = parseTxNumericQty(w.inputHasil !== undefined ? w.inputHasil : (w.total || (isMandoran ? 0 : 1)));
+          const selisih = inputVal - targetBasis;
+          const selisihHtml = targetBasis > 0
+            ? (selisih >= 0
+                ? `<span style="color: #15803d; font-weight: 700;">+${selisih.toLocaleString('id-ID')} ${esc(uom)}</span>`
+                : `<span style="color: #b91c1c; font-weight: 700;">${selisih.toLocaleString('id-ID')} ${esc(uom)}</span>`)
+            : '<span style="color: #64748b;">-</span>';
+
+          const hasilColHtml = isMandoran
+            ? `<strong style="color: #15803d;">${inputVal.toLocaleString('id-ID')} ${esc(uom)}</strong>`
+            : `<span style="color: #0284c7; font-weight: 700; background: #eff6ff; padding: 2px 8px; border-radius: 4px;">Hadir Penuh</span>`;
+
+          return `
+            <tr style="border-bottom: 1px solid #f1f5f9; font-size: 0.78rem;">
+              <td style="padding: 8px 10px; color: #64748b; font-weight: 600;">${i + 1}</td>
+              <td style="padding: 8px 10px; font-weight: 700; color: #0f172a;">${esc(w.name || w.workerName || 'Pekerja')}</td>
+              <td style="padding: 8px 10px; font-family: monospace; color: #64748b; font-size: 0.74rem;">${esc(w.code || w.workerCode || '-')}</td>
+              <td style="padding: 8px 10px; color: #475569;">${esc(w.position || w.role || (isMandoran ? 'Pekerja Borongan' : 'Pekerja Harian'))}</td>
+              ${isMandoran ? `
+                <td style="padding: 8px 10px; text-align: right; color: #64748b;">${targetBasis > 0 ? `${targetBasis.toLocaleString('id-ID')} ${esc(uom)}` : '-'}</td>
+                <td style="padding: 8px 10px; text-align: right;">${hasilColHtml}</td>
+                <td style="padding: 8px 10px; text-align: right;">${selisihHtml}</td>
+                <td style="padding: 8px 10px; color: #64748b; font-size: 0.74rem;">${esc(w.resultType || 'TUNTAS')}</td>
+              ` : `
+                <td style="padding: 8px 10px; text-align: center;">${hasilColHtml}</td>
+                <td style="padding: 8px 10px; color: #64748b; font-size: 0.74rem;">${esc(w.statusKerja || 'Alokasi Kegiatan Harian Selesai')}</td>
+              `}
+            </tr>
+          `;
+        }).join('')
+      : `
+        <tr>
+          <td colspan="${isMandoran ? 8 : 6}" style="padding: 16px; text-align: center; color: #64748b; font-size: 0.8rem;">
+            Tidak ada rincian data tenaga kerja.
+          </td>
+        </tr>
+      `;
+
+    openModal({
+      title: `Detail Transaksi: Rekam Pemeliharaan`,
+      body: `
+        <div style="display: flex; flex-direction: column; gap: 14px; max-height: 70vh; overflow-y: auto;">
+          <!-- HERO CARD -->
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+              <div>
+                <span style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.04em;">No. Dokumen Rawat</span>
+                <h3 style="margin: 2px 0 0; font-size: 1.15rem; font-weight: 800; color: #0284c7;">${esc(docNo)}</h3>
+              </div>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <span style="display: inline-block; font-size: 0.72rem; font-weight: 800; padding: 3px 8px; border-radius: 9999px; background: ${isMandoran ? '#fff7ed' : '#eff6ff'}; color: ${isMandoran ? '#c2410c' : '#1d4ed8'}; border: 1px solid ${isMandoran ? '#fed7aa' : '#bfdbfe'};">
+                  ${isMandoran ? 'REKAM AKTIVITAS MANDORAN' : 'REKAM AKTIVITAS HARIAN'}
+                </span>
+                ${getTxStatusBadge(item.status || 'VERIFIED')}
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.82rem;">
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Alokasi Kegiatan:</span><br>
+                <strong style="color: #0f172a;">${esc(alokasi)}</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Peran / Kelompok Kerja:</span><br>
+                <strong style="color: #334155;">${esc(roleName)}</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Program & Lokasi:</span><br>
+                <strong style="color: #334155;">${esc(program)} — ${esc(blokBedengan)}</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Tanggal & Mandor:</span><br>
+                <strong style="color: #334155;">${esc(item.tanggal || todayISO())} (${esc(mandor)})</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-weight: 500;">Dibuat Oleh (Created By):</span><br>
+                <strong style="color: #0f172a;">${esc(item.createdByName || 'Wagiman')}</strong>
+                <span style="display: inline-block; font-size: 0.68rem; font-weight: 700; color: #0284c7; background: #f0f9ff; border: 1px solid #bae6fd; padding: 1px 6px; border-radius: 4px; margin-left: 4px;">
+                  ${esc(item.createdByRole || 'Mantri Bibitan')}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- METRIC CARDS -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+            <div style="background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #475569; text-transform: uppercase;">Fitur Rekam</div>
+              <div style="font-size: 1.05rem; font-weight: 800; color: ${isMandoran ? '#c2410c' : '#1d4ed8'}; margin-top: 2px;">
+                ${isMandoran ? 'Mandoran' : 'Harian (CFNA)'}
+              </div>
+              <div style="font-size: 0.7rem; color: #64748b;">${isMandoran ? 'Per Pekerja Borongan' : 'Alokasi Pekerja Harian'}</div>
+            </div>
+            <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #1e40af; text-transform: uppercase;">Tenaga Kerja</div>
+              <div style="font-size: 1.15rem; font-weight: 800; color: #1e3a8a; margin-top: 2px;">${pList.length}</div>
+              <div style="font-size: 0.7rem; color: #3b82f6;">Orang Pekerja Terdaftar</div>
+            </div>
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #15803d; text-transform: uppercase;">Total Realisasi Hasil</div>
+              <div style="font-size: 1.15rem; font-weight: 800; color: #15803d; margin-top: 2px;">${totalHasil.toLocaleString('id-ID')}</div>
+              <div style="font-size: 0.7rem; color: #166534;">${esc(uom)} ${isMandoran && targetBasis > 0 ? `(Basis: ${targetBasis.toLocaleString('id-ID')}/${uom})` : ''}</div>
+            </div>
+          </div>
+
+          <!-- DETAIL RINCIAN PEKERJA -->
+          <div>
+            <h4 style="margin: 8px 0 8px; font-size: 0.85rem; font-weight: 700; color: #1e293b; display: flex; align-items: center; gap: 6px;">
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+              Rincian Entri Data Tenaga Kerja per Alokasi (${pList.length} Pekerja)
+            </h4>
+            <div style="border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
+              <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <thead style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 0.72rem; color: #475569; text-transform: uppercase;">
+                  <tr>
+                    <th style="padding: 8px 10px; width: 30px;">#</th>
+                    <th style="padding: 8px 10px;">Nama Pekerja</th>
+                    <th style="padding: 8px 10px;">NIK / Kode</th>
+                    <th style="padding: 8px 10px;">Posisi</th>
+                    ${isMandoran ? `
+                      <th style="padding: 8px 10px; text-align: right;">Target Basis</th>
+                      <th style="padding: 8px 10px; text-align: right;">Realisasi Hasil</th>
+                      <th style="padding: 8px 10px; text-align: right;">Selisih Basis</th>
+                      <th style="padding: 8px 10px;">Status Kerja</th>
+                    ` : `
+                      <th style="padding: 8px 10px; text-align: center;">Status Kehadiran</th>
+                      <th style="padding: 8px 10px;">Keterangan Alokasi</th>
+                    `}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${workerRowsHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `,
+      footer: `
+        <button class="btn btn-primary" data-detail-close>Tutup</button>
+      `
+    });
+
+    const root = document.getElementById('modal-root');
+    root.querySelector('[data-detail-close]')?.addEventListener('click', closeModal);
+    return;
+  }
+
   openModal({
     title: `Detail Transaksi: ${cfg.title}`,
     body: `
@@ -3368,22 +4977,25 @@ function renderTxModuleFields(modId, item) {
     return `
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <div>
-          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Jenis Kegiatan Rawat</label>
-          <input class="feedback-form-input" id="tx-input-activityType" type="text" value="${esc(item?.activityType || item?.jenisKegiatan || 'Pemupukan Rutin')}" />
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Fitur / Mode Entri <span style="color:#ef4444;">*</span></label>
+          <select class="feedback-form-input" id="tx-input-activityEntryMode">
+            <option value="HARIAN" ${item?.activityEntryMode === 'HARIAN' ? 'selected' : ''}>Rekam Aktivitas Harian (Alokasi CFNA)</option>
+            <option value="MANDORAN" ${item?.activityEntryMode === 'MANDORAN' ? 'selected' : ''}>Rekam Aktivitas Mandoran (Borongan)</option>
+          </select>
         </div>
         <div>
-          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Tahapan & Bedengan</label>
-          <input class="feedback-form-input" id="tx-input-bedengan" type="text" value="${esc(item?.bedengan || 'Bedengan 01')}" />
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Jenis Kegiatan / Alokasi</label>
+          <input class="feedback-form-input" id="tx-input-alokasi" type="text" value="${esc(item?.alokasi || item?.activityType || 'A01-01 — Pemupukan NPK')}" />
         </div>
       </div>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <div>
-          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Bahan / Dosis Material</label>
-          <input class="feedback-form-input" id="tx-input-materialName" type="text" value="${esc(item?.materialName || item?.dosis || 'NPK 15-15-15 (10gr/pkk)')}" />
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Target Basis (Khusus Mandoran)</label>
+          <input class="feedback-form-input" id="tx-input-taskQuantity" type="number" value="${esc(item?.taskQuantity || 500)}" />
         </div>
         <div>
-          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Volume Kegiatan</label>
-          <input class="feedback-form-input" id="tx-input-volumePkk" type="number" value="${esc(item?.volumePkk || item?.qty || 500)}" />
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Total Volume / Hasil Realisasi</label>
+          <input class="feedback-form-input" id="tx-input-volumePkk" type="number" value="${esc(item?.totalHasil || item?.volumePkk || item?.qty || 500)}" />
         </div>
       </div>
     `;
@@ -3392,23 +5004,61 @@ function renderTxModuleFields(modId, item) {
     return `
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <div>
-          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Nama Material</label>
-          <input class="feedback-form-input" id="tx-input-materialName" type="text" value="${esc(item?.materialName || item?.name || 'Pupuk NPK 15-15-15')}" />
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Item Code <span style="color:#ef4444;">*</span></label>
+          <input class="feedback-form-input" id="tx-input-itemCode" type="text" value="${esc(item?.itemCode || '7065168')}" />
         </div>
         <div>
-          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Kategori</label>
-          <input class="feedback-form-input" id="tx-input-category" type="text" value="${esc(item?.category || 'Pupuk')}" />
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Nama Material & Bahan <span style="color:#ef4444;">*</span></label>
+          <input class="feedback-form-input" id="tx-input-itemName" type="text" value="${esc(item?.itemName || item?.materialName || 'POLYBAG 25X50CMX0,20MM')}" />
         </div>
       </div>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <div>
-          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Satuan</label>
-          <input class="feedback-form-input" id="tx-input-unit" type="text" value="${esc(item?.unit || 'Kg')}" />
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">No. Dokumen Issue</label>
+          <input class="feedback-form-input" id="tx-input-noIssue" type="text" value="${esc(item?.noIssue || item?.docNo || 'ISS-2026-001')}" />
         </div>
         <div>
-          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Stok Saat Ini</label>
-          <input class="feedback-form-input" id="tx-input-currentStock" type="number" value="${esc(item?.currentStock || item?.stock || 250)}" />
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Alokasi Biaya</label>
+          <input class="feedback-form-input" id="tx-input-alokasi" type="text" value="${esc(item?.alokasi || 'NUR-MAIN — Nursery Main Stage')}" />
         </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Satuan (UOM)</label>
+          <input class="feedback-form-input" id="tx-input-uom" type="text" value="${esc(item?.uom || item?.unit || 'LBR')}" />
+        </div>
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Kuantitas Issue Gudang <span style="color:#ef4444;">*</span></label>
+          <input class="feedback-form-input" id="tx-input-quantityIssue" type="number" value="${esc(item?.quantityIssue || 1000)}" />
+        </div>
+      </div>
+    `;
+  }
+  if (modId === 'mandoranConsolidation') {
+    return `
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Alokasi Kegiatan <span style="color:#ef4444;">*</span></label>
+          <input class="feedback-form-input" id="tx-input-alokasi" type="text" value="${esc(item?.alokasi || 'RAW-01 — Pemupukan Rutin')}" />
+        </div>
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Peran Kelompok Kerja</label>
+          <input class="feedback-form-input" id="tx-input-roleName" type="text" value="${esc(item?.roleName || 'Pekerja Borongan/Harian')}" />
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Jumlah Tenaga Kerja (Orang)</label>
+          <input class="feedback-form-input" id="tx-input-workerCount" type="number" value="${esc(item?.workerCount || 4)}" />
+        </div>
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Total Hasil Kerja Terkonsolidasi <span style="color:#ef4444;">*</span></label>
+          <input class="feedback-form-input" id="tx-input-totalHasil" type="number" value="${esc(item?.totalHasil || 1200)}" />
+        </div>
+      </div>
+      <div>
+        <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Satuan (UOM)</label>
+        <input class="feedback-form-input" id="tx-input-uom" type="text" value="${esc(item?.uom || 'Pkk')}" />
       </div>
     `;
   }
@@ -3433,6 +5083,86 @@ function renderTxModuleFields(modId, item) {
           <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Jlh Dikeluarkan</label>
           <input class="feedback-form-input" id="tx-input-qtyDispatched" type="number" value="${esc(item?.qtyDispatched || item?.qty || 1000)}" />
         </div>
+      </div>
+    `;
+  }
+  if (modId === 'dederan') {
+    return `
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Ref. Dok Induk / Penerimaan</label>
+          <input class="feedback-form-input" id="tx-input-parentDocNo" type="text" value="${esc(item?.parentDocNo || item?.parentDederIndukDocNo || 'DED-IN-2026-001')}" />
+        </div>
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Nomor Bedengan</label>
+          <input class="feedback-form-input" id="tx-input-bedengan" type="text" value="${esc(item?.bedengan || item?.bedenganCode || 'Bedengan 01')}" />
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Klon Benih</label>
+          <input class="feedback-form-input" id="tx-input-klon" type="text" value="${esc(item?.klon || 'GT 1')}" />
+        </div>
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Jumlah Dideder (Butir) <span style="color:#ef4444;">*</span></label>
+          <input class="feedback-form-input" id="tx-input-jumlahDeder" type="number" value="${esc(item?.jumlahDeder || item?.qty || 1000)}" />
+        </div>
+      </div>
+    `;
+  }
+  if (modId === 'dispatch') {
+    return `
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Ref. Dokumen SPB</label>
+          <input class="feedback-form-input" id="tx-input-parentRequestDocNo" type="text" value="${esc(item?.parentRequestDocNo || item?.requestDocNo || 'SPB-2026-001')}" />
+        </div>
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Tujuan Pengiriman</label>
+          <input class="feedback-form-input" id="tx-input-targetDivision" type="text" value="${esc(item?.targetDivision || item?.targetDivisionName || 'Divisi II')}" />
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Klon Bibit</label>
+          <input class="feedback-form-input" id="tx-input-klon" type="text" value="${esc(item?.klon || item?.clone || 'PB 260')}" />
+        </div>
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Jumlah Kirim (Pkk) <span style="color:#ef4444;">*</span></label>
+          <input class="feedback-form-input" id="tx-input-qtyKirim" type="number" value="${esc(item?.qtyKirim || item?.issuedQty || item?.qty || 500)}" />
+        </div>
+      </div>
+      <div>
+        <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Plat Nomor Kendaraan</label>
+        <input class="feedback-form-input" id="tx-input-vehiclePlate" type="text" value="${esc(item?.vehiclePlate || 'BK 1234 XY')}" />
+      </div>
+    `;
+  }
+  if (modId === 'destruction') {
+    return `
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Ref. Dokumen Seleksi / Batch</label>
+          <input class="feedback-form-input" id="tx-input-sourceSelectionNo" type="text" value="${esc(item?.sourceSelectionNo || item?.batchCode || 'SEL-2026-001')}" />
+        </div>
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Nomor Bedengan</label>
+          <input class="feedback-form-input" id="tx-input-bedengan" type="text" value="${esc(item?.bedengan || item?.bedenganCode || 'Bedengan 01')}" />
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Klon Bibit</label>
+          <input class="feedback-form-input" id="tx-input-klon" type="text" value="${esc(item?.klon || 'GT 1')}" />
+        </div>
+        <div>
+          <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Jumlah Dimusnahkan (Pkk) <span style="color:#ef4444;">*</span></label>
+          <input class="feedback-form-input" id="tx-input-qty" type="number" value="${esc(item?.qty || item?.destructionQty || 50)}" />
+        </div>
+      </div>
+      <div>
+        <label style="display: block; font-weight: 600; color: #334155; margin-bottom: 4px;">Alasan Pemusnahan</label>
+        <input class="feedback-form-input" id="tx-input-reason" type="text" value="${esc(item?.reason || item?.alasan || 'Bibit mati / abnormal')}" />
       </div>
     `;
   }
@@ -3505,20 +5235,92 @@ function extractTxFormPayload(modId, root) {
     p.klon = root.querySelector('#tx-input-klon')?.value || 'PB 260';
     p.jumlahPokok = parseInt(root.querySelector('#tx-input-jumlahPokok')?.value || 0) || 0;
   } else if (modId === 'nurseryActivity') {
-    p.activityType = root.querySelector('#tx-input-activityType')?.value || 'Pemupukan Rutin';
-    p.bedengan = root.querySelector('#tx-input-bedengan')?.value || 'Bedengan 01';
-    p.materialName = root.querySelector('#tx-input-materialName')?.value || 'NPK 15-15-15';
+    const mode = root.querySelector('#tx-input-activityEntryMode')?.value || 'HARIAN';
+    p.activityEntryMode = mode;
+    p.entryMode = mode;
+    p.alokasi = root.querySelector('#tx-input-alokasi')?.value || 'A01-01 — Pemupukan NPK';
+    p.activityType = p.alokasi;
+    p.taskQuantity = parseInt(root.querySelector('#tx-input-taskQuantity')?.value || 0) || 0;
     p.volumePkk = parseInt(root.querySelector('#tx-input-volumePkk')?.value || 0) || 0;
+    p.totalHasil = p.volumePkk;
   } else if (modId === 'material') {
-    p.materialName = root.querySelector('#tx-input-materialName')?.value || 'Pupuk';
-    p.category = root.querySelector('#tx-input-category')?.value || 'Pupuk';
-    p.unit = root.querySelector('#tx-input-unit')?.value || 'Kg';
-    p.currentStock = parseInt(root.querySelector('#tx-input-currentStock')?.value || 0) || 0;
+    const itemCode = root.querySelector('#tx-input-itemCode')?.value || '7065168';
+    const itemName = root.querySelector('#tx-input-itemName')?.value || 'POLYBAG 25X50CMX0,20MM';
+    const noIssue = root.querySelector('#tx-input-noIssue')?.value || ('ISS-' + Date.now());
+    const alokasi = root.querySelector('#tx-input-alokasi')?.value || 'NUR-MAIN';
+    const uom = root.querySelector('#tx-input-uom')?.value || 'LBR';
+    const quantityIssue = parseInt(root.querySelector('#tx-input-quantityIssue')?.value || 0, 10) || 0;
+
+    p.itemCode = itemCode;
+    p.itemName = itemName;
+    p.materialName = itemName;
+    p.noIssue = noIssue;
+    p.docNo = noIssue;
+    p.alokasi = alokasi;
+    p.kodeAlokasi = alokasi;
+    p.uom = uom;
+    p.unit = uom;
+    p.quantityIssue = quantityIssue;
+    p.items = [{
+      id: uid(),
+      itemCode,
+      itemName,
+      uom,
+      quantityIssue,
+      usedQuantity: 0,
+      remainingQuantity: quantityIssue,
+      status: 'AVAILABLE'
+    }];
+    p.usedQuantity = 0;
+    p.remainingQuantity = quantityIssue;
+    p.status = 'AVAILABLE';
+  } else if (modId === 'mandoranConsolidation') {
+    const alokasi = root.querySelector('#tx-input-alokasi')?.value || 'RAW-01 — Pemupukan';
+    const roleName = root.querySelector('#tx-input-roleName')?.value || 'Pekerja Borongan';
+    const workerCount = parseInt(root.querySelector('#tx-input-workerCount')?.value || 0, 10) || 1;
+    const totalHasil = parseInt(root.querySelector('#tx-input-totalHasil')?.value || 0, 10) || 0;
+    const uom = root.querySelector('#tx-input-uom')?.value || 'Pkk';
+
+    p.alokasi = alokasi;
+    p.allocationName = alokasi;
+    p.roleName = roleName;
+    p.workerCount = workerCount;
+    p.totalHasil = totalHasil;
+    p.uom = uom;
+    p.unit = uom;
+    p.type = 'MANDORAN_RESULT_CONSOLIDATION';
+    p.status = 'CONSOLIDATED';
   } else if (modId === 'request') {
     p.targetDivision = root.querySelector('#tx-input-targetDivision')?.value || 'Divisi II';
     p.tahapan = root.querySelector('#tx-input-tahapan')?.value || 'Rubber Main Nursery';
     p.klon = root.querySelector('#tx-input-klon')?.value || 'PB 260';
     p.qtyDispatched = parseInt(root.querySelector('#tx-input-qtyDispatched')?.value || 0) || 0;
+  } else if (modId === 'dederan') {
+    p.parentDederIndukDocNo = root.querySelector('#tx-input-parentDocNo')?.value || '';
+    p.parentDocNo = p.parentDederIndukDocNo;
+    p.bedenganCode = root.querySelector('#tx-input-bedengan')?.value || 'Bedengan 01';
+    p.bedengan = p.bedenganCode;
+    p.klon = root.querySelector('#tx-input-klon')?.value || 'GT 1';
+    p.jumlahDeder = parseInt(root.querySelector('#tx-input-jumlahDeder')?.value || 0) || 0;
+    p.qty = p.jumlahDeder;
+  } else if (modId === 'dispatch') {
+    p.parentRequestDocNo = root.querySelector('#tx-input-parentRequestDocNo')?.value || '';
+    p.targetDivisionName = root.querySelector('#tx-input-targetDivision')?.value || 'Divisi II';
+    p.targetDivision = p.targetDivisionName;
+    p.clone = root.querySelector('#tx-input-klon')?.value || 'PB 260';
+    p.klon = p.clone;
+    p.qtyKirim = parseInt(root.querySelector('#tx-input-qtyKirim')?.value || 0) || 0;
+    p.issuedQty = p.qtyKirim;
+    p.vehiclePlate = root.querySelector('#tx-input-vehiclePlate')?.value || '';
+  } else if (modId === 'destruction') {
+    p.sourceSelectionNo = root.querySelector('#tx-input-sourceSelectionNo')?.value || '';
+    p.bedenganCode = root.querySelector('#tx-input-bedengan')?.value || 'Bedengan 01';
+    p.bedengan = p.bedenganCode;
+    p.klon = root.querySelector('#tx-input-klon')?.value || 'GT 1';
+    p.qty = parseInt(root.querySelector('#tx-input-qty')?.value || 0) || 0;
+    p.destructionQty = p.qty;
+    p.reason = root.querySelector('#tx-input-reason')?.value || 'AFKIR';
+    p.alasan = p.reason;
   } else if (modId === 'syncQueue') {
     p.entity = root.querySelector('#tx-input-entity')?.value || 'receptions';
     p.action = root.querySelector('#tx-input-action')?.value || 'CREATE';

@@ -4,7 +4,7 @@
  * Setiap perubahan file langsung terlihat setelah refresh (tanpa clear cache,
  * tanpa unregister, tanpa hard refresh). Sifat PWA tetap dipertahankan.
  */
-const CACHE_NAME = 'sigma-nursery-v181';
+const CACHE_NAME = 'sigma-nursery-v182';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -14,6 +14,7 @@ const CORE_ASSETS = [
   './css/pages.css',
   './css/review.css',
   './js/app.js',
+  './js/modules/destruction/destruction-landing.js',
   './js/core/router.js',
   './js/core/session.js',
   './js/core/user-context.js',
