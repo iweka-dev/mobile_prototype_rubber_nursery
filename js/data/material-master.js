@@ -13,6 +13,7 @@
 
 import { storage } from '../core/storage.js';
 import { formatDate } from '../core/utils.js';
+import { getCurrentUserContext, resolveUserContext } from '../core/user-context.js';
 import {
   INITIAL_MASTER_MATERIALS,
   INITIAL_ISSUE_DOCUMENTS,
@@ -50,12 +51,12 @@ export function isTransactionMatchingIssueItem(tx, doc, item, docItemCount = 1) 
   if (!tx || !doc || !item) return false;
 
   const txIssue = String(
-    tx.issueDocNo || 
-    tx.noIssue || 
-    tx.sir || 
-    tx.rawState?.selectedSir?.issueNo || 
-    tx.rawState?.selectedSir?.noIssue || 
-    tx.rawState?.selectedSir?.id || 
+    tx.issueDocNo ||
+    tx.noIssue ||
+    tx.sir ||
+    tx.rawState?.selectedSir?.issueNo ||
+    tx.rawState?.selectedSir?.noIssue ||
+    tx.rawState?.selectedSir?.id ||
     ''
   ).trim().toUpperCase();
   const docId = String(doc.id || '').trim().toUpperCase();
@@ -109,12 +110,12 @@ export function calculateIssueItemUsedQuantity(doc, item, docItemCount = 1, excl
   receiptTxs.forEach(tx => {
     if (excludeTxDocNo && (tx.docNo === excludeTxDocNo || tx.id === excludeTxDocNo || tx.nomorDokumen === excludeTxDocNo)) return;
     if (isTransactionMatchingIssueItem(tx, doc, item, docItemCount)) {
-      const raw = tx.rawState?.selectedSir?.rawQty ?? 
-                  tx.rawState?.selectedSir?.remainingQuantity ?? 
-                  tx.rawState?.selectedSir?.quantityIssue ?? 
-                  tx.jumlahBenih ?? 
-                  tx.totalKecambah ?? 
-                  tx.qty;
+      const raw = tx.rawState?.selectedSir?.rawQty ??
+        tx.rawState?.selectedSir?.remainingQuantity ??
+        tx.rawState?.selectedSir?.quantityIssue ??
+        tx.jumlahBenih ??
+        tx.totalKecambah ??
+        tx.qty;
       const num = typeof raw === 'number' ? raw : parseInt(String(raw || '0').replace(/[^0-9]/g, ''), 10);
       if (!isNaN(num) && num > 0) {
         usedQty += num;
@@ -148,8 +149,8 @@ export function calculateIssueItemUsedQuantity(doc, item, docItemCount = 1, excl
 export function calculateRemainingIssueBalance(noIssue, issueItemId, itemCode = null, excludeDocNo = null) {
   initMaterialMasterStorage();
   const rawDocs = storage.get(STORAGE_KEYS.ISSUE_DOCUMENTS) || INITIAL_ISSUE_DOCUMENTS;
-  const doc = rawDocs.find(d => 
-    String(d.noIssue || '').trim().toUpperCase() === String(noIssue || '').trim().toUpperCase() || 
+  const doc = rawDocs.find(d =>
+    String(d.noIssue || '').trim().toUpperCase() === String(noIssue || '').trim().toUpperCase() ||
     String(d.id || '').trim().toUpperCase() === String(noIssue || '').trim().toUpperCase()
   );
 
@@ -260,8 +261,8 @@ export function getIssueByNoIssue(noIssueOrId) {
   if (!noIssueOrId) return null;
   const docs = getAllIssueDocuments();
   const query = String(noIssueOrId).trim().toUpperCase();
-  return docs.find(d => 
-    String(d.noIssue).trim().toUpperCase() === query || 
+  return docs.find(d =>
+    String(d.noIssue).trim().toUpperCase() === query ||
     String(d.id).trim().toUpperCase() === query
   ) || null;
 }
@@ -320,7 +321,7 @@ export function getMaterialSummaryStats() {
   const materials = getAllMaterials();
   const issues = getAllIssueDocuments();
   const unifiedRecords = getUnifiedMaterialRecords();
-  
+
   let totalAvailableIssues = 0;
   let totalItemsCount = 0;
 
@@ -437,11 +438,11 @@ export function getOperationalMaterialRecords() {
     const rawIssueDocNo = String(tx.issueDocNo || tx.sir || '').trim();
     const hasIssueDoc = Boolean(rawIssueDocNo) && rawIssueDocNo !== '-';
 
-    const rawBenihQty = tx.jumlahBenih ?? 
-                        tx.rawState?.selectedSir?.rawQty ?? 
-                        tx.rawState?.selectedSir?.quantityIssue ?? 
-                        tx.qty ?? 
-                        0;
+    const rawBenihQty = tx.jumlahBenih ??
+      tx.rawState?.selectedSir?.rawQty ??
+      tx.rawState?.selectedSir?.quantityIssue ??
+      tx.qty ??
+      0;
     const benihQty = typeof rawBenihQty === 'number'
       ? rawBenihQty
       : (parseInt(String(rawBenihQty).replace(/[^0-9]/g, ''), 10) || 0);
@@ -573,7 +574,7 @@ export function createManualMaterialRecord(payload = {}, userContext = null) {
   }
 
   const existingList = storage.get('material_usage_transactions', []) || [];
-  
+
   // Format docNo standar MAT/YYYY/XXX
   let docNo = payload.docNo;
   if (!docNo) {
@@ -584,8 +585,9 @@ export function createManualMaterialRecord(payload = {}, userContext = null) {
 
   const id = payload.id || `MAT-REC-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 
-  const actorName = payload.createdByName || userContext?.name || 'Mantri Bibitan';
-  const actorId = payload.createdByUserId || userContext?.id || userContext?.userId || 'USR-MTR-001';
+  const activeUser = userContext || getCurrentUserContext() || resolveUserContext();
+  const actorName = payload.createdByName || activeUser?.name || 'Mantri Bibitan';
+  const actorId = payload.createdByUserId || activeUser?.id || activeUser?.userId || 'USR-MTR-001';
 
   const newRecord = {
     id,
@@ -607,8 +609,8 @@ export function createManualMaterialRecord(payload = {}, userContext = null) {
     batchCode: payload.batchCode || '-',
     bedenganId: payload.bedenganId || null,
     bedenganCode: payload.bedenganCode || '-',
-    estateId: payload.estateId || userContext?.estateId || 'EST-TB',
-    divisionId: payload.divisionId || userContext?.divisionId || 'DIV-01',
+    estateId: payload.estateId || activeUser?.estateId || 'EST-TBS',
+    divisionId: payload.divisionId || activeUser?.divisionId || 'DIV-001',
     createdByUserId: actorId,
     createdByName: actorName,
     createdAt: new Date().toISOString()

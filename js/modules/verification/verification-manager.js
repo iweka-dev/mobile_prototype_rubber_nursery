@@ -1239,12 +1239,23 @@ export function getActionableRecordsForAsb(currentUser, filters = {}) {
     }
 
     // Jika source record berstatus DIKEMBALIKAN / REVISION, tidak actionable untuk pending queue Asisten
-    if (rawRecord.status === 'DIKEMBALIKAN' || rawRecord.status === 'REVISION' || rawRecord.materialSubmissionStatus === 'DIKEMBALIKAN') return;
-
-    // 4. PENGAMANAN ASB APPROVAL: Jika dokumen sumber sudah disetujui sah & final, jangan hitung sebagai pending!
     const rawStatusNorm = String(rawRecord.status || '').toUpperCase();
-    if (rawStatusNorm === 'DISETUJUI' && rawRecord.isFinal) return;
-    if (rawRecord.verificationStatus === VERIFICATION_STATUS.TERVERIFIKASI || rawRecord.verificationStatus === 'DATA_TERKONFIRMASI') return;
+
+    if (refType === 'MATERIAL') {
+      if (rawRecord.materialSubmissionStatus === 'DIKEMBALIKAN') return;
+      if (!rawRecord.materialSubmissionStatus && (rawRecord.status === 'DIKEMBALIKAN' || rawRecord.status === 'REVISION')) return;
+
+      // Pengamanan ASB Approval untuk Material:
+      if (rawRecord.materialSubmissionStatus === 'DISETUJUI') return;
+      if (!rawRecord.materialSubmissionStatus && (rawStatusNorm === 'DISETUJUI' && rawRecord.isFinal)) return;
+      if (rawRecord.materialVerificationStatus === VERIFICATION_STATUS.TERVERIFIKASI || rawRecord.materialVerificationStatus === 'DATA_TERKONFIRMASI') return;
+    } else {
+      if (rawRecord.status === 'DIKEMBALIKAN' || rawRecord.status === 'REVISION') return;
+
+      // 4. PENGAMANAN ASB APPROVAL: Jika dokumen sumber sudah disetujui sah & final, jangan hitung sebagai pending!
+      if (rawStatusNorm === 'DISETUJUI' && rawRecord.isFinal) return;
+      if (rawRecord.verificationStatus === VERIFICATION_STATUS.TERVERIFIKASI || rawRecord.verificationStatus === 'DATA_TERKONFIRMASI') return;
+    }
 
     const estateId = verifRecord.estateId || rawRecord.targetEstateId || rawRecord.estateId || rawRecord.sourceEstateId;
     const divisionId = verifRecord.divisionId || rawRecord.targetDivisionId || rawRecord.divisionId || rawRecord.sourceDivisionId;
@@ -1425,18 +1436,30 @@ export function getVerificationRecordsByScope(currentUser, filters = {}) {
 
     const normalizedData = getVerificationDetailData(sourceRecord || rawRecord, currentUser, refType);
 
-    const rawStatusNorm = String(rawRecord.status || '').toUpperCase();
     let effectiveVerifStatus = verifRecord.verificationStatus || VERIFICATION_STATUS.MENUNGGU_VERIFIKASI;
 
-    // Sinkronisasi status bila dokumen sudah disetujui final
-    if (rawStatusNorm === 'DISETUJUI' && rawRecord.isFinal) {
-      effectiveVerifStatus = VERIFICATION_STATUS.TERVERIFIKASI;
-    } else if (
-      (rawStatusNorm === 'MENUNGGU_VERIFIKASI' || rawStatusNorm === 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN' || rawRecord.submissionStatus === 'SUBMITTED_TO_ASB') &&
-      effectiveVerifStatus === VERIFICATION_STATUS.DIKEMBALIKAN
-    ) {
-      // Jika dokumen yang pernah dikembalikan sudah disubmit ulang oleh Mantri, statusnya di ASB kembali menjadi MENUNGGU_VERIFIKASI
-      effectiveVerifStatus = VERIFICATION_STATUS.MENUNGGU_VERIFIKASI;
+    if (refType === 'MATERIAL') {
+      const matStatusNorm = String(rawRecord.materialSubmissionStatus || rawRecord.status || '').toUpperCase();
+      if (matStatusNorm === 'DISETUJUI') {
+        effectiveVerifStatus = VERIFICATION_STATUS.TERVERIFIKASI;
+      } else if (
+        (matStatusNorm === 'MENUNGGU_VERIFIKASI' || matStatusNorm === 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN' || matStatusNorm === 'SUBMITTED' || rawRecord.materialSubmissionStatus === 'SUBMITTED_TO_ASB') &&
+        effectiveVerifStatus === VERIFICATION_STATUS.DIKEMBALIKAN
+      ) {
+        effectiveVerifStatus = VERIFICATION_STATUS.MENUNGGU_VERIFIKASI;
+      }
+    } else {
+      const rawStatusNorm = String(rawRecord.status || '').toUpperCase();
+      // Sinkronisasi status bila dokumen sudah disetujui final
+      if (rawStatusNorm === 'DISETUJUI' && rawRecord.isFinal) {
+        effectiveVerifStatus = VERIFICATION_STATUS.TERVERIFIKASI;
+      } else if (
+        (rawStatusNorm === 'MENUNGGU_VERIFIKASI' || rawStatusNorm === 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN' || rawRecord.submissionStatus === 'SUBMITTED_TO_ASB') &&
+        effectiveVerifStatus === VERIFICATION_STATUS.DIKEMBALIKAN
+      ) {
+        // Jika dokumen yang pernah dikembalikan sudah disubmit ulang oleh Mantri, statusnya di ASB kembali menjadi MENUNGGU_VERIFIKASI
+        effectiveVerifStatus = VERIFICATION_STATUS.MENUNGGU_VERIFIKASI;
+      }
     }
 
     list.push({
@@ -1449,9 +1472,9 @@ export function getVerificationRecordsByScope(currentUser, filters = {}) {
       summary: normalizedData.summary,
       estateId,
       divisionId,
-      currentStatus: rawRecord.status || effectiveVerifStatus || 'SUBMITTED',
+      currentStatus: (refType === 'MATERIAL' && rawRecord.materialSubmissionStatus) ? rawRecord.materialSubmissionStatus : (rawRecord.status || effectiveVerifStatus || 'SUBMITTED'),
       verificationStatus: effectiveVerifStatus,
-      returnReason: (effectiveVerifStatus === VERIFICATION_STATUS.DIKEMBALIKAN ? (rawRecord.returnReason || verifRecord.returnReason || null) : null),
+      returnReason: (effectiveVerifStatus === VERIFICATION_STATUS.DIKEMBALIKAN ? ((refType === 'MATERIAL' && rawRecord.materialReturnReason) ? rawRecord.materialReturnReason : (rawRecord.returnReason || verifRecord.returnReason || null)) : null),
       latestVerification: verifRecord,
       canApprove: evalResult.canApprove,
       errors: evalResult.errors,
@@ -1883,8 +1906,19 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
   if (existingVerif && (existingVerif.verificationStatus === VERIFICATION_STATUS.TERVERIFIKASI || existingVerif.verificationStatus === VERIFICATION_STATUS.DATA_TERKONFIRMASI)) {
     throw new Error(`Dokumen ini sudah diverifikasi sebelumnya dengan No: ${existingVerif.verificationNo || existingVerif.verificationId}.`);
   }
-  if (sourceRecord.isFinal && (sourceRecord.status === 'DISETUJUI' || sourceRecord.status === 'TERKONFIRMASI')) {
-    throw new Error(`Dokumen ini sudah disetujui sebelumnya dan berstatus final (${sourceRecord.docNo || referenceId}).`);
+  if (referenceType === 'MATERIAL') {
+    if (sourceRecord.materialSubmissionStatus === 'DISETUJUI') {
+      throw new Error(`Dokumen material ini sudah disetujui sebelumnya (${sourceRecord.docNo || referenceId}).`);
+    }
+    if (sourceRecord._storeKey !== 'seeding_transactions') {
+      if (sourceRecord.isFinal && (sourceRecord.status === 'DISETUJUI' || sourceRecord.status === 'TERKONFIRMASI')) {
+        throw new Error(`Dokumen ini sudah disetujui sebelumnya dan berstatus final (${sourceRecord.docNo || referenceId}).`);
+      }
+    }
+  } else {
+    if (sourceRecord.isFinal && (sourceRecord.status === 'DISETUJUI' || sourceRecord.status === 'TERKONFIRMASI')) {
+      throw new Error(`Dokumen ini sudah disetujui sebelumnya dan berstatus final (${sourceRecord.docNo || referenceId}).`);
+    }
   }
 
   // 4. CONSISTENCY GATE
@@ -1923,12 +1957,14 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
   // 6. Helper: Simpan / perbarui di verification_transactions HANYA setelah mutasi & update sumber sukses
   const persistVerificationRecord = () => {
     const currentVerifs = storage.get(VERIFICATION_STORAGE_KEY, []);
+    const targetType = (referenceType || '').toUpperCase();
     let found = false;
     currentVerifs.forEach((v, i) => {
-      if (
-        (referenceId && String(v.referenceId) === String(referenceId)) ||
-        (docNo && String(v.referenceDocNo) === String(docNo))
-      ) {
+      const vType = (v.referenceType || v.moduleType || '').toUpperCase();
+      const isSameType = (vType === targetType);
+      const isSameRef = (referenceId && String(v.referenceId) === String(referenceId)) ||
+        (docNo && String(v.referenceDocNo) === String(docNo));
+      if (isSameRef && isSameType) {
         currentVerifs[i] = {
           ...v,
           ...auditRecord,
@@ -2270,12 +2306,21 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
         }
       } else if (referenceType === 'MATERIAL') {
         targetRecord.materialSubmissionStatus = 'DISETUJUI';
-        targetRecord.status = 'DISETUJUI';
-        targetRecord.isFinal = true;
-        targetRecord.verificationStatus = VERIFICATION_STATUS.TERVERIFIKASI;
-        targetRecord.verifiedAt = nowIso;
-        targetRecord.verifiedByUserId = currentUser.userId || currentUser.id;
-        targetRecord.verifiedByName = currentUser.name || 'Asisten Bibitan';
+        targetRecord.materialVerificationStatus = VERIFICATION_STATUS.TERVERIFIKASI;
+        targetRecord.materialVerifiedAt = nowIso;
+        targetRecord.materialVerifiedByUserId = currentUser.userId || currentUser.id;
+        targetRecord.materialVerifiedByName = currentUser.name || 'Asisten Bibitan';
+
+        // Hanya jika targetRecord BUKAN seeding_transactions (misal material_usage_transactions tersendiri),
+        // update status utama record. Untuk seeding_transactions (SOW), jangan sentuh status Penyemaian!
+        if (sourceRecord._storeKey !== 'seeding_transactions') {
+          targetRecord.status = 'DISETUJUI';
+          targetRecord.isFinal = true;
+          targetRecord.verificationStatus = VERIFICATION_STATUS.TERVERIFIKASI;
+          targetRecord.verifiedAt = nowIso;
+          targetRecord.verifiedByUserId = currentUser.userId || currentUser.id;
+          targetRecord.verifiedByName = currentUser.name || 'Asisten Bibitan';
+        }
         records[idx] = targetRecord;
         storage.set(sourceRecord._storeKey, records);
         persistVerificationRecord();
@@ -2284,9 +2329,6 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
         targetRecord.status = referenceType === 'TIDAK_HADIR' ? 'TERKONFIRMASI' : 'DISETUJUI';
         targetRecord.isFinal = true;
         targetRecord.verificationStatus = referenceType === 'TIDAK_HADIR' ? VERIFICATION_STATUS.DATA_TERKONFIRMASI : VERIFICATION_STATUS.TERVERIFIKASI;
-        if (targetRecord.materialSubmissionStatus) {
-          targetRecord.materialSubmissionStatus = 'DISETUJUI';
-        }
         targetRecord.verifiedAt = nowIso;
         targetRecord.verifiedByUserId = currentUser.userId || currentUser.id;
         targetRecord.verifiedByName = currentUser.name || 'Asisten Bibitan';
@@ -2303,7 +2345,7 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
       }
 
       // Auto-reconcile Dokumen Seleksi Pra-Okulasi jika Pindah Semai (SEEDING) atau CULL baru disetujui ASB
-      if (referenceType === 'PENYEMAIAN' || referenceType === 'SEEDING' || referenceType === 'SELEKSI' || referenceType === 'PENYELEKSIAN' || sourceRecord._storeKey === 'seeding_transactions' || sourceRecord._storeKey === 'selection_transactions') {
+      if (referenceType !== 'MATERIAL' && (referenceType === 'PENYEMAIAN' || referenceType === 'SEEDING' || referenceType === 'SELEKSI' || referenceType === 'PENYELEKSIAN' || sourceRecord._storeKey === 'selection_transactions')) {
         try {
           syncAllSeedingsToPreGraftingSelectionDocuments(currentUser);
           syncAllApprovedPreGraftingSelectionDocuments(currentUser);
@@ -2357,8 +2399,19 @@ export function returnVerification({ referenceType, referenceId, returnReason, n
     throw new Error(`Dokumen yang sudah diverifikasi dan berstatus final tidak dapat dikembalikan (No: ${existingVerif.verificationNo || existingVerif.verificationId}).`);
   }
 
-  if (sourceRecord.isFinal || sourceRecord.status === 'DISETUJUI' || sourceRecord.status === 'TERKONFIRMASI') {
-    throw new Error(`Dokumen ini sudah berstatus final (${sourceRecord.docNo || referenceId}) dan tidak dapat dikembalikan.`);
+  if (referenceType === 'MATERIAL') {
+    if (sourceRecord.materialSubmissionStatus === 'DISETUJUI') {
+      throw new Error(`Dokumen material ini sudah berstatus disetujui (${sourceRecord.docNo || referenceId}) dan tidak dapat dikembalikan.`);
+    }
+    if (sourceRecord._storeKey !== 'seeding_transactions') {
+      if (sourceRecord.isFinal || sourceRecord.status === 'DISETUJUI' || sourceRecord.status === 'TERKONFIRMASI') {
+        throw new Error(`Dokumen ini sudah berstatus final (${sourceRecord.docNo || referenceId}) dan tidak dapat dikembalikan.`);
+      }
+    }
+  } else {
+    if (sourceRecord.isFinal || sourceRecord.status === 'DISETUJUI' || sourceRecord.status === 'TERKONFIRMASI') {
+      throw new Error(`Dokumen ini sudah berstatus final (${sourceRecord.docNo || referenceId}) dan tidak dapat dikembalikan.`);
+    }
   }
 
   if (sourceRecord.stockMutationStatus === 'APPLIED') {
@@ -2430,16 +2483,26 @@ export function returnVerification({ referenceType, referenceId, returnReason, n
     if (idx !== -1) {
       if (referenceType === 'MATERIAL') {
         records[idx].materialSubmissionStatus = 'DIKEMBALIKAN';
+        records[idx].materialVerificationStatus = VERIFICATION_STATUS.DIKEMBALIKAN;
+        records[idx].materialReturnReason = returnReason.trim();
+        records[idx].materialReturnedAt = nowIso;
+        if (sourceRecord._storeKey !== 'seeding_transactions') {
+          records[idx].status = 'DIKEMBALIKAN';
+          records[idx].verificationStatus = VERIFICATION_STATUS.DIKEMBALIKAN;
+          records[idx].returnReason = returnReason.trim();
+          records[idx].returnedAt = nowIso;
+          records[idx].returnedByUserId = currentUser.userId || currentUser.id;
+        }
       } else {
         records[idx].status = 'DIKEMBALIKAN';
         records[idx].verificationStatus = VERIFICATION_STATUS.DIKEMBALIKAN;
         if (records[idx].submissionStatus) {
           records[idx].submissionStatus = 'DIKEMBALIKAN';
         }
+        records[idx].returnReason = returnReason.trim();
+        records[idx].returnedAt = nowIso;
+        records[idx].returnedByUserId = currentUser.userId || currentUser.id;
       }
-      records[idx].returnReason = returnReason.trim();
-      records[idx].returnedAt = nowIso;
-      records[idx].returnedByUserId = currentUser.userId || currentUser.id;
 
       if (referenceType === 'SELEKSI_PRA_OKULASI' || sourceRecord._storeKey === 'pre_grafting_selection_documents') {
         records[idx].isCompleted = false;

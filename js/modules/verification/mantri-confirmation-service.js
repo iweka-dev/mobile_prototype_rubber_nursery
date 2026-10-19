@@ -320,9 +320,17 @@ function resolveTransactionStatus(item, moduleType, verifMap) {
 
   // 1. Cek dari verification_transactions dengan composite key (moduleType:id) atau direct id
   const modKey = String(moduleType || '').toUpperCase();
-  const verifRecord = (modKey ? (verifMap.get(`${modKey}:${itemId}`) || verifMap.get(`${modKey}:${itemDocNo}`)) : null) ||
-    verifMap.get(itemId) ||
-    verifMap.get(itemDocNo);
+  const isMaterialModule = modKey === 'MATERIAL';
+  let verifRecord = modKey ? (verifMap.get(`${modKey}:${itemId}`) || verifMap.get(`${modKey}:${itemDocNo}`)) : null;
+  if (!verifRecord) {
+    const candidate = verifMap.get(itemId) || verifMap.get(itemDocNo);
+    if (candidate) {
+      const cType = String(candidate.referenceType || candidate.moduleType || '').toUpperCase();
+      if (!cType || !modKey || cType === modKey || (modKey === 'MATERIAL' && cType === 'SIMULASI_GUDANG')) {
+        verifRecord = candidate;
+      }
+    }
+  }
 
   if (verifRecord) {
     const vStat = (verifRecord.verificationStatus || '').toUpperCase();
@@ -342,11 +350,13 @@ function resolveTransactionStatus(item, moduleType, verifMap) {
       };
     }
     if (vStat === VERIFICATION_STATUS.DIKEMBALIKAN || vStat === 'REVISION') {
-      const isRepairedReady = (
-        String(item.status || '').toUpperCase() === 'READY_TO_CONFIRM' ||
-        String(item.status || '').toUpperCase() === 'MENUNGGU_VERIFIKASI_MANTRI' ||
-        Boolean(item.isCorrected)
-      ) && item.verificationStatus !== 'DIKEMBALIKAN';
+      const isRepairedReady = isMaterialModule
+        ? (Boolean(item.materialIsCorrected) || String(item.materialSubmissionStatus || '').toUpperCase() === 'READY_TO_CONFIRM')
+        : ((
+            String(item.status || '').toUpperCase() === 'READY_TO_CONFIRM' ||
+            String(item.status || '').toUpperCase() === 'MENUNGGU_VERIFIKASI_MANTRI' ||
+            Boolean(item.isCorrected)
+          ) && item.verificationStatus !== 'DIKEMBALIKAN');
       if (isRepairedReady) {
         return {
           status: MANTRI_TRANSACTION_STATUS.READY_TO_CONFIRM,
@@ -370,42 +380,73 @@ function resolveTransactionStatus(item, moduleType, verifMap) {
   }
 
   // 2. Cek verified / return status jika item sudah final / dikembalikan
-  const isMaterialModule = modKey === 'MATERIAL';
   const rawSubStat = String((isMaterialModule && item.materialSubmissionStatus ? item.materialSubmissionStatus : null) || item.submissionStatus || '').toUpperCase().trim();
   const rawStat = String(item.status || item.verificationStatus || '').toUpperCase().trim();
   const isFinal = Boolean(item.isFinal);
 
-  if (
-    rawStat === 'DISETUJUI' ||
-    rawStat === 'VERIFIED' ||
-    rawStat === 'APPROVED' ||
-    rawStat === 'DATA_TERKONFIRMASI' ||
-    rawStat === 'TERKONFIRMASI' ||
-    (rawStat === 'DISETUJUI' && isFinal) ||
-    item.verifiedAt
-  ) {
-    return {
-      status: MANTRI_TRANSACTION_STATUS.VERIFIED,
-      verificationStatus: VERIFICATION_STATUS.TERVERIFIKASI,
-      latestVerification: null
-    };
-  }
+  if (isMaterialModule) {
+    if (rawSubStat === 'DISETUJUI' || String(item.materialSubmissionStatus || '').toUpperCase() === 'DISETUJUI') {
+      return {
+        status: MANTRI_TRANSACTION_STATUS.VERIFIED,
+        verificationStatus: VERIFICATION_STATUS.TERVERIFIKASI,
+        latestVerification: verifRecord
+      };
+    }
+    if (rawSubStat === 'DIKEMBALIKAN' || String(item.materialSubmissionStatus || '').toUpperCase() === 'DIKEMBALIKAN') {
+      return {
+        status: MANTRI_TRANSACTION_STATUS.REVISION,
+        verificationStatus: VERIFICATION_STATUS.DIKEMBALIKAN,
+        latestVerification: verifRecord
+      };
+    }
+    // Standalone material_usage_transactions fallback
+    if (item.storageKey === 'material_usage_transactions') {
+      if (rawStat === 'DISETUJUI' || (rawStat === 'DISETUJUI' && isFinal) || item.verifiedAt) {
+        return {
+          status: MANTRI_TRANSACTION_STATUS.VERIFIED,
+          verificationStatus: VERIFICATION_STATUS.TERVERIFIKASI,
+          latestVerification: verifRecord
+        };
+      }
+      if (rawStat === 'DIKEMBALIKAN' || rawStat === 'REVISION') {
+        return {
+          status: MANTRI_TRANSACTION_STATUS.REVISION,
+          verificationStatus: VERIFICATION_STATUS.DIKEMBALIKAN,
+          latestVerification: verifRecord
+        };
+      }
+    }
+  } else {
+    if (
+      rawStat === 'DISETUJUI' ||
+      rawStat === 'VERIFIED' ||
+      rawStat === 'APPROVED' ||
+      rawStat === 'DATA_TERKONFIRMASI' ||
+      rawStat === 'TERKONFIRMASI' ||
+      (rawStat === 'DISETUJUI' && isFinal) ||
+      item.verifiedAt
+    ) {
+      return {
+        status: MANTRI_TRANSACTION_STATUS.VERIFIED,
+        verificationStatus: VERIFICATION_STATUS.TERVERIFIKASI,
+        latestVerification: null
+      };
+    }
 
-  if (rawStat === 'DIKEMBALIKAN' || rawStat === 'REVISION' || rawSubStat === 'REVISION' || rawSubStat === 'DIKEMBALIKAN') {
-    return {
-      status: MANTRI_TRANSACTION_STATUS.REVISION,
-      verificationStatus: VERIFICATION_STATUS.DIKEMBALIKAN,
-      latestVerification: null
-    };
+    if (rawStat === 'DIKEMBALIKAN' || rawStat === 'REVISION' || rawSubStat === 'REVISION' || rawSubStat === 'DIKEMBALIKAN') {
+      return {
+        status: MANTRI_TRANSACTION_STATUS.REVISION,
+        verificationStatus: VERIFICATION_STATUS.DIKEMBALIKAN,
+        latestVerification: null
+      };
+    }
   }
 
   // 3. Cek explicit submission metadata
   const hasValidSubmittedAt = Boolean(item.submittedAt && String(item.submittedAt).trim() !== '' && String(item.submittedAt).trim() !== '-');
-  const isExplicitlySubmitted = (
-    rawSubStat === 'SUBMITTED_TO_ASB' ||
-    (isMaterialModule && String(item.materialSubmissionStatus || '').toUpperCase() === 'SUBMITTED_TO_ASB') ||
-    hasValidSubmittedAt
-  );
+  const isExplicitlySubmitted = isMaterialModule
+    ? (String(item.materialSubmissionStatus || '').toUpperCase() === 'SUBMITTED_TO_ASB' || Boolean(item.materialSubmittedAt))
+    : (rawSubStat === 'SUBMITTED_TO_ASB' || hasValidSubmittedAt);
 
   if (isExplicitlySubmitted) {
     return {
@@ -1551,7 +1592,11 @@ export function submitMantriTransactions(transactionIds = [], userContext = null
       }
     } else if (tx.storageKey) {
       const records = storage.get(tx.storageKey, []);
-      const rIdx = records.findIndex(r => String(r.id || r.docNo || '') === String(tx.id));
+      const rIdx = records.findIndex(r =>
+        (r.id && String(r.id) === String(tx.id)) ||
+        (r.docNo && String(r.docNo) === String(tx.id)) ||
+        (tx.docNo && r.docNo && String(r.docNo) === String(tx.docNo))
+      );
       if (rIdx !== -1) {
         if (tx.moduleType === MODULE_TYPES.MATERIAL) {
           records[rIdx].materialSubmissionStatus = 'SUBMITTED_TO_ASB';
@@ -1580,12 +1625,14 @@ export function submitMantriTransactions(transactionIds = [], userContext = null
     }
 
     // 2. Buat / perbarui catatan di verification_transactions secara IDEMPOTENT
-    const existingIdx = allVerifs.findIndex(v =>
-      ((v.referenceId && String(v.referenceId) === String(tx.id)) ||
-       (v.referenceDocNo && String(v.referenceDocNo) === String(tx.docNo))) &&
-      ((v.referenceType || v.moduleType || '').toUpperCase() === (tx.referenceType || tx.moduleType || '').toUpperCase() ||
-       (v.referenceDocNo && String(v.referenceDocNo) === String(tx.docNo)))
-    );
+    const targetType = (tx.referenceType || tx.moduleType || '').toUpperCase();
+    const existingIdx = allVerifs.findIndex(v => {
+      const isSameRef = ((v.referenceId && String(v.referenceId) === String(tx.id)) ||
+        (v.referenceDocNo && String(v.referenceDocNo) === String(tx.docNo)));
+      const vType = (v.referenceType || v.moduleType || '').toUpperCase();
+      const isSameType = (vType === targetType);
+      return isSameRef && isSameType;
+    });
 
     if (existingIdx !== -1) {
       allVerifs[existingIdx].verificationStatus = VERIFICATION_STATUS.MENUNGGU_VERIFIKASI;
@@ -1616,8 +1663,8 @@ export function submitMantriTransactions(transactionIds = [], userContext = null
         uom: tx.uom || tx.rawRecord?.uom || null,
         batchCode: tx.batchCode || tx.rawRecord?.batchCode || tx.rawRecord?.batchNo || null,
         bedenganCode: tx.bedenganCode || tx.rawRecord?.bedenganCode || tx.rawRecord?.bedengan || null,
-        estateId: tx.rawRecord?.targetEstateId || tx.rawRecord?.estateId || tx.rawRecord?.sourceEstateId || user?.estateId || 'EST-01',
-        divisionId: tx.rawRecord?.targetDivisionId || tx.rawRecord?.divisionId || tx.rawRecord?.sourceDivisionId || user?.divisionId || 'DIV-01',
+        estateId: tx.rawRecord?.targetEstateId || tx.rawRecord?.estateId || tx.rawRecord?.sourceEstateId || user?.estateId || 'EST-TBS',
+        divisionId: tx.rawRecord?.targetDivisionId || tx.rawRecord?.divisionId || tx.rawRecord?.sourceDivisionId || user?.divisionId || 'DIV-001',
         verificationStatus: VERIFICATION_STATUS.MENUNGGU_VERIFIKASI,
         findings: [],
         notes: '',
@@ -1681,7 +1728,7 @@ export function submitModuleTransactions(moduleType, userContext = null, current
   }
 
   const txIds = targetModuleTxs.map(tx => tx.id);
-  const result = submitMantriTransactions(txIds, user, null, currentTime);
+  const result = submitMantriTransactions(txIds, user, moduleType, currentTime);
   const modLabel = MODULE_LABELS[moduleType] || moduleType;
 
   return {
@@ -1752,7 +1799,11 @@ export function submitOverdueTransactionsByDate(targetDate, userContext = null, 
       }
     } else if (tx.storageKey) {
       const records = storage.get(tx.storageKey, []);
-      const rIdx = records.findIndex(r => String(r.id || r.docNo || '') === String(tx.id));
+      const rIdx = records.findIndex(r =>
+        (r.id && String(r.id) === String(tx.id)) ||
+        (r.docNo && String(r.docNo) === String(tx.id)) ||
+        (tx.docNo && r.docNo && String(r.docNo) === String(tx.docNo))
+      );
       if (rIdx !== -1) {
         if (tx.moduleType === MODULE_TYPES.MATERIAL) {
           records[rIdx].materialSubmissionStatus = 'SUBMITTED_TO_ASB';
@@ -1813,8 +1864,8 @@ export function submitOverdueTransactionsByDate(targetDate, userContext = null, 
         uom: tx.uom || tx.rawRecord?.uom || null,
         batchCode: tx.batchCode || tx.rawRecord?.batchCode || tx.rawRecord?.batchNo || null,
         bedenganCode: tx.bedenganCode || tx.rawRecord?.bedenganCode || tx.rawRecord?.bedengan || null,
-        estateId: tx.rawRecord?.targetEstateId || tx.rawRecord?.estateId || tx.rawRecord?.sourceEstateId || user?.estateId || 'EST-01',
-        divisionId: tx.rawRecord?.targetDivisionId || tx.rawRecord?.divisionId || tx.rawRecord?.sourceDivisionId || user?.divisionId || 'DIV-01',
+        estateId: tx.rawRecord?.targetEstateId || tx.rawRecord?.estateId || tx.rawRecord?.sourceEstateId || user?.estateId || 'EST-TBS',
+        divisionId: tx.rawRecord?.targetDivisionId || tx.rawRecord?.divisionId || tx.rawRecord?.sourceDivisionId || user?.divisionId || 'DIV-001',
         verificationStatus: VERIFICATION_STATUS.MENUNGGU_VERIFIKASI,
         isOverdueSubmission: true,
         findings: [],

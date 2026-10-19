@@ -176,21 +176,19 @@ export function renderMaterialMaster() {
         <!-- HEADER -->
         <header style="background: #FFFFFF; border-bottom: 1px solid #E2E8F0; padding: 12px 16px; flex-shrink: 0; z-index: 10;">
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-            <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
-              <button id="mat-btn-back" type="button" aria-label="Kembali ke Beranda" style="background: #F1F5F9; border: 1px solid #E2E8F0; cursor: pointer; padding: 7px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #334155; flex-shrink: 0;">
-                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <div style="display: flex; align-items: center; min-width: 0;">
+              <button id="mat-btn-back" type="button" aria-label="Kembali" style="padding: 8px; margin-left: -8px; background: transparent; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #116834; flex-shrink: 0;">
+                <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
                   <line x1="19" y1="12" x2="5" y2="12"></line>
                   <polyline points="12 19 5 12 12 5"></polyline>
                 </svg>
               </button>
-              <div style="min-width: 0;">
-                <h1 style="font-size: 1.05rem; font-weight: 700; color: #0F172A; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2;">Material & Bahan</h1>
-              </div>
+              <h1 style="font-size: 1.15rem; font-weight: 700; color: #0F172A; margin: 0 0 0 6px; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2;">Material & Bahan</h1>
             </div>
 
             <!-- SYNC / REFRESH BUTTON -->
-            <button id="mat-btn-sync" type="button" aria-label="Sinkronisasi Data" title="Sync / Refresh Data" style="background: #F1F5F9; border: 1px solid #E2E8F0; cursor: pointer; padding: 7px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #116834; flex-shrink: 0; transition: transform 0.3s ease;">
-              <svg id="mat-sync-svg" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <button id="mat-btn-sync" type="button" aria-label="Muat ulang data" title="Muat ulang data" style="padding: 6px; margin-right: -4px; background: transparent; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #116834; flex-shrink: 0;">
+              <svg id="sync-icon-svg" viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.4s ease;">
                 <polyline points="23 4 23 10 17 10"></polyline>
                 <polyline points="1 20 1 14 7 14"></polyline>
                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
@@ -201,13 +199,13 @@ export function renderMaterialMaster() {
           <!-- TAB SWITCHER (3 TABS) -->
           <div style="display: flex; background: #F1F5F9; padding: 3px; border-radius: 8px; margin-top: 12px; gap: 2px;">
             <button id="tab-btn-master" type="button" style="flex: 1; padding: 8px 6px; border: none; border-radius: 6px; font-size: 0.76rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease; ${activeTab === 'master' ? 'background: #FFFFFF; color: #0F172A; box-shadow: 0 1px 3px rgba(0,0,0,0.08);' : 'background: transparent; color: #64748B;'}">
-              Master Material <span style="display: inline-block; padding: 1px 5px; background: ${activeTab === 'master' ? '#E0F2FE' : '#E2E8F0'}; color: ${activeTab === 'master' ? '#0369A1' : '#475569'}; border-radius: 10px; font-size: 0.66rem; margin-left: 2px;">${stats.totalMasterMaterials}</span>
+              Master Material <span style="display: inline-block; padding: 1px 5px; background: ${activeTab === 'master' ? '#E2E8F0' : '#E2E8F0'}; color: #334155; border-radius: 10px; font-size: 0.66rem; margin-left: 2px;">${stats.totalMasterMaterials}</span>
             </button>
             <button id="tab-btn-issue" type="button" style="flex: 1; padding: 8px 6px; border: none; border-radius: 6px; font-size: 0.76rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease; ${activeTab === 'issue' ? 'background: #FFFFFF; color: #0F172A; box-shadow: 0 1px 3px rgba(0,0,0,0.08);' : 'background: transparent; color: #64748B;'}">
-              Issue Gudang <span style="display: inline-block; padding: 1px 5px; background: ${activeTab === 'issue' ? '#E0F2FE' : '#E2E8F0'}; color: ${activeTab === 'issue' ? '#0369A1' : '#475569'}; border-radius: 10px; font-size: 0.66rem; margin-left: 2px;">${stats.totalIssueDocuments}</span>
+              Issue Gudang <span style="display: inline-block; padding: 1px 5px; background: ${activeTab === 'issue' ? '#E2E8F0' : '#E2E8F0'}; color: #334155; border-radius: 10px; font-size: 0.66rem; margin-left: 2px;">${stats.totalIssueDocuments}</span>
             </button>
             <button id="tab-btn-pencatatan" type="button" style="flex: 1; padding: 8px 6px; border: none; border-radius: 6px; font-size: 0.76rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease; ${activeTab === 'pencatatan' ? 'background: #FFFFFF; color: #0F172A; box-shadow: 0 1px 3px rgba(0,0,0,0.08);' : 'background: transparent; color: #64748B;'}">
-              Pencatatan Material <span style="display: inline-block; padding: 1px 5px; background: ${activeTab === 'pencatatan' ? '#E0F2FE' : '#E2E8F0'}; color: ${activeTab === 'pencatatan' ? '#0369A1' : '#475569'}; border-radius: 10px; font-size: 0.66rem; margin-left: 2px;">${stats.totalMaterialRecords}</span>
+              Pencatatan Material <span style="display: inline-block; padding: 1px 5px; background: ${activeTab === 'pencatatan' ? '#E2E8F0' : '#E2E8F0'}; color: #334155; border-radius: 10px; font-size: 0.66rem; margin-left: 2px;">${stats.totalMaterialRecords}</span>
             </button>
           </div>
         </header>
@@ -226,9 +224,8 @@ export function renderMaterialMaster() {
         <!-- STICKY BOTTOM FOOTER ACTION (PRESENSI-STYLE ACTION BUTTON) -->
         ${activeTab === 'pencatatan' && canCreate ? `
           <footer class="attendance-footer" style="padding: 12px 16px calc(12px + var(--safe-bottom, 0px));">
-            <button class="attendance-btn-primary" id="btn-create-material-record" type="button" style="background: #116834;">
-              <span class="btn-primary-text">Rekam Material</span>
-              <span class="btn-primary-arrow">›</span>
+            <button class="attendance-btn-primary" id="btn-create-material-record" type="button" style="background: #116834; justify-content: center;">
+              <span class="btn-primary-text" style="font-size: 0.88rem;">Rekam Material</span>
             </button>
           </footer>
         ` : ''}
@@ -257,12 +254,8 @@ export function renderMaterialMaster() {
       <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
         <div style="display: flex; flex-direction: column; gap: 10px;">
           <!-- SEARCH INPUT -->
-          <div style="position: relative; width: 100%;">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none;">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <input id="input-master-search" type="text" placeholder="Cari Item Code atau Nama Material..." value="${esc(state.masterSearch)}" style="width: 100%; box-sizing: border-box; padding: 8px 10px 8px 34px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 0.82rem; color: #0F172A; outline: none; background: #F8FAFC;" />
+          <div style="width: 100%;">
+            <input id="input-master-search" type="text" placeholder="Cari Item Code atau Nama Material..." value="${esc(state.masterSearch)}" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 0.82rem; color: #0F172A; outline: none; background: #F8FAFC;" />
           </div>
 
           <!-- FILTERS -->
@@ -324,13 +317,13 @@ export function renderMaterialMaster() {
                       <td style="padding: 12px 14px;">
                         <div style="font-weight: 600; color: #0F172A; line-height: 1.35; font-size: 0.82rem;">${esc(m.itemName)}</div>
                         ${isNormalized ? `
-                          <div style="font-size: 0.68rem; color: #D97706; margin-top: 3px; display: inline-flex; align-items: center; gap: 3px;">
-                            <span style="font-weight: 700;">★ Normalized:</span> Master UOM dikunci ke <strong>BH</strong>
+                          <div style="font-size: 0.68rem; color: #475569; margin-top: 3px; display: inline-flex; align-items: center; gap: 3px;">
+                            <span style="font-weight: 700;">Normalized:</span> Master UOM dikunci ke <strong>BH</strong>
                           </div>
                         ` : ''}
                       </td>
                       <td style="padding: 12px 14px; text-align: center; white-space: nowrap;">
-                        <span style="display: inline-block; padding: 3px 8px; background: #E0F2FE; color: #0369A1; font-weight: 700; border-radius: 6px; font-size: 0.72rem; white-space: nowrap;">
+                        <span style="display: inline-block; padding: 3px 8px; background: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-weight: 700; border-radius: 6px; font-size: 0.72rem; white-space: nowrap;">
                           ${esc(m.uom)}
                         </span>
                       </td>
@@ -340,11 +333,7 @@ export function renderMaterialMaster() {
                         </span>
                       </td>
                       <td style="padding: 12px 14px; text-align: center; white-space: nowrap;">
-                        <button type="button" class="btn-view-issues" data-item-code="${esc(m.itemCode)}" style="background: #F8FAFC; border: 1px solid #CBD5E1; padding: 5px 10px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; color: #0369A1; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.15s ease; white-space: nowrap;">
-                          <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                            <circle cx="12" cy="12" r="3"></circle>
-                          </svg>
+                        <button type="button" class="btn-view-issues" data-item-code="${esc(m.itemCode)}" style="background: #F8FAFC; border: 1px solid #CBD5E1; padding: 5px 10px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; color: #116834; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.15s ease; white-space: nowrap;">
                           Lihat Issue
                         </button>
                       </td>
@@ -367,12 +356,8 @@ export function renderMaterialMaster() {
         <div style="display: flex; flex-direction: column; gap: 10px;">
           
           <!-- SEARCH INPUT -->
-          <div style="position: relative; width: 100%;">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none;">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <input id="input-issue-search" type="text" placeholder="Cari No Issue, Material, Alokasi, Purpose..." value="${esc(state.issueSearch)}" style="width: 100%; box-sizing: border-box; padding: 8px 10px 8px 34px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 0.82rem; color: #0F172A; outline: none; background: #F8FAFC;" />
+          <div style="width: 100%;">
+            <input id="input-issue-search" type="text" placeholder="Cari No Issue, Material, Alokasi, Purpose..." value="${esc(state.issueSearch)}" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 0.82rem; color: #0F172A; outline: none; background: #F8FAFC;" />
           </div>
 
           <!-- FILTER DROPDOWNS -->
@@ -395,9 +380,9 @@ export function renderMaterialMaster() {
         </div>
 
         ${state.selectedMaterialCode ? `
-          <div style="margin-top: 10px; padding: 6px 10px; background: #E0F2FE; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; font-size: 0.75rem; color: #0369A1;">
+          <div style="margin-top: 10px; padding: 6px 10px; background: #F1F5F9; border: 1px solid #E2E8F0; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; font-size: 0.75rem; color: #334155;">
             <div>Menampilkan Issue untuk: <strong>${esc(state.selectedMaterialCode)}</strong></div>
-            <button id="btn-clear-material-filter" type="button" style="background: transparent; border: none; color: #0284C7; font-weight: 700; cursor: pointer; padding: 2px 6px;">Reset Filter</button>
+            <button id="btn-clear-material-filter" type="button" style="background: transparent; border: none; color: #116834; font-weight: 700; cursor: pointer; padding: 2px 6px;">Reset Filter</button>
           </div>
         ` : ''}
       </div>
@@ -407,7 +392,7 @@ export function renderMaterialMaster() {
         
         <div style="padding: 12px 16px; background: #F8FAFC; border-bottom: 1px solid #E2E8F0; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
           <div style="font-size: 0.84rem; font-weight: 700; color: #1E293B;">Daftar Dokumen Issue Gudang</div>
-          <span style="display: inline-block; padding: 2px 8px; background: #E0F2FE; color: #0369A1; border: 1px solid #BAE6FD; font-weight: 700; border-radius: 12px; font-size: 0.7rem; white-space: nowrap;">
+          <span style="display: inline-block; padding: 2px 8px; background: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-weight: 700; border-radius: 12px; font-size: 0.7rem; white-space: nowrap;">
             ${issues.length} Dokumen Terposting
           </span>
         </div>
@@ -447,7 +432,7 @@ export function renderMaterialMaster() {
                           <span style="display: inline-block; padding: 2px 6px; background: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; font-family: monospace; font-size: 0.72rem; font-weight: 700; color: #334155; white-space: nowrap;">
                             Item: ${esc(item.itemCode || '-')}
                           </span>
-                          <span style="display: inline-block; padding: 2px 6px; background: #E0F2FE; color: #0369A1; font-weight: 700; border-radius: 4px; font-size: 0.7rem; white-space: nowrap;">
+                          <span style="display: inline-block; padding: 2px 6px; background: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-weight: 700; border-radius: 4px; font-size: 0.7rem; white-space: nowrap;">
                             ${esc(item.uom || '-')}
                           </span>
                         </div>
@@ -458,8 +443,7 @@ export function renderMaterialMaster() {
                         <span style="font-family: monospace; font-weight: 700; color: #0F172A; font-size: 0.8rem; display: block;">
                           ${esc(doc.noIssue)}
                         </span>
-                        <span style="font-size: 0.72rem; color: #64748B; margin-top: 3px; display: inline-flex; align-items: center; gap: 4px;">
-                          <svg viewBox="0 0 24 24" width="12" height="12" stroke="#64748B" stroke-width="2" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                        <span style="font-size: 0.72rem; color: #64748B; margin-top: 3px; display: block;">
                           ${esc(doc.tanggal)}
                         </span>
                       </td>
@@ -722,7 +706,30 @@ export function renderMaterialMaster() {
 
     openModal({
       title: `Detail Dokumen Issue`,
-      body: modalBody,
+      className: 'material-modal',
+      body: `
+        <style>
+          .material-modal .modal-close {
+            font-size: 0 !important;
+            width: auto !important;
+            height: auto !important;
+            padding: 3px 8px !important;
+            background: #F1F5F9 !important;
+            border: 1px solid #CBD5E1 !important;
+            border-radius: 4px !important;
+            color: #475569 !important;
+            font-weight: 600 !important;
+            line-height: 1.2 !important;
+            cursor: pointer !important;
+          }
+          .material-modal .modal-close::after {
+            content: "Tutup" !important;
+            font-size: 0.76rem !important;
+            display: inline-block !important;
+          }
+        </style>
+        ${modalBody}
+      `,
       footer: `
         <div style="width: 100%;">
           <button id="modal-btn-close-detail" type="button" style="width: 100%; height: 42px; background: #116834; color: #FFFFFF; border: none; border-radius: 8px; font-weight: 700; font-size: 0.88rem; cursor: pointer; box-shadow: 0 2px 4px rgba(17,104,52,0.25); transition: all 0.15s ease; display: flex; align-items: center; justify-content: center; letter-spacing: 0.01em;">
@@ -731,6 +738,19 @@ export function renderMaterialMaster() {
         </div>
       `
     });
+
+    const issueCloseBtn = document.querySelector('#modal-root [data-modal-close]');
+    if (issueCloseBtn) {
+      issueCloseBtn.textContent = 'Tutup';
+      issueCloseBtn.style.fontSize = '0.78rem';
+      issueCloseBtn.style.fontWeight = '600';
+      issueCloseBtn.style.color = '#64748B';
+      issueCloseBtn.style.background = '#F1F5F9';
+      issueCloseBtn.style.border = '1px solid #CBD5E1';
+      issueCloseBtn.style.borderRadius = '4px';
+      issueCloseBtn.style.padding = '2px 8px';
+      issueCloseBtn.style.cursor = 'pointer';
+    }
 
     document.getElementById('modal-btn-close-detail')?.addEventListener('click', closeModal);
   }
@@ -742,12 +762,8 @@ export function renderMaterialMaster() {
       <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
         <div style="display: flex; flex-direction: column; gap: 10px;">
           <!-- SEARCH INPUT -->
-          <div style="position: relative; width: 100%;">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="#94A3B8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none;">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <input id="input-record-search" type="text" placeholder="Cari Dokumen Penerimaan, SOW, Material, Batch, Issue..." value="${esc(state.recordSearch)}" style="width: 100%; box-sizing: border-box; padding: 8px 10px 8px 34px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 0.82rem; color: #0F172A; outline: none; background: #F8FAFC;" />
+          <div style="width: 100%;">
+            <input id="input-record-search" type="text" placeholder="Cari Dokumen Penerimaan, SOW, Material, Batch, Issue..." value="${esc(state.recordSearch)}" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 0.82rem; color: #0F172A; outline: none; background: #F8FAFC;" />
           </div>
 
           <!-- FILTERS & ACTIONS ROW -->
@@ -773,7 +789,7 @@ export function renderMaterialMaster() {
         
         <div style="padding: 12px 16px; background: #F8FAFC; border-bottom: 1px solid #E2E8F0; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
           <div style="font-size: 0.84rem; font-weight: 700; color: #1E293B;">Daftar Pencatatan Material</div>
-          <span style="display: inline-block; padding: 2px 8px; background: #E0F2FE; color: #0369A1; border: 1px solid #BAE6FD; font-weight: 700; border-radius: 12px; font-size: 0.7rem; white-space: nowrap;">
+          <span style="display: inline-block; padding: 2px 8px; background: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; font-weight: 700; border-radius: 12px; font-size: 0.7rem; white-space: nowrap;">
             ${records.length} Catatan
           </span>
         </div>
@@ -942,14 +958,7 @@ export function renderMaterialMaster() {
 
         <!-- DETAIL FIELDS CARD (RINCIAN INFORMASI REFERENSI) -->
         <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-          <div style="font-size: 0.70rem; font-weight: 800; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
-            <svg viewBox="0 0 24 24" width="14" height="14" stroke="#64748B" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-              <polyline points="10 9 9 9 8 9"></polyline>
-            </svg>
+          <div style="font-size: 0.70rem; font-weight: 800; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;">
             Rincian Informasi Referensi
           </div>
 
@@ -1007,7 +1016,30 @@ export function renderMaterialMaster() {
 
     openModal({
       title: `Detail Pencatatan Material`,
-      body: modalBody,
+      className: 'material-modal',
+      body: `
+        <style>
+          .material-modal .modal-close {
+            font-size: 0 !important;
+            width: auto !important;
+            height: auto !important;
+            padding: 3px 8px !important;
+            background: #F1F5F9 !important;
+            border: 1px solid #CBD5E1 !important;
+            border-radius: 4px !important;
+            color: #475569 !important;
+            font-weight: 600 !important;
+            line-height: 1.2 !important;
+            cursor: pointer !important;
+          }
+          .material-modal .modal-close::after {
+            content: "Tutup" !important;
+            font-size: 0.76rem !important;
+            display: inline-block !important;
+          }
+        </style>
+        ${modalBody}
+      `,
       footer: `
         <div style="width: 100%;">
           <button id="modal-btn-close-record-detail" type="button" style="width: 100%; height: 42px; background: #116834; color: #FFFFFF; border: none; border-radius: 8px; font-weight: 700; font-size: 0.88rem; cursor: pointer; box-shadow: 0 2px 4px rgba(17,104,52,0.25); transition: all 0.15s ease; display: flex; align-items: center; justify-content: center; letter-spacing: 0.01em;">
@@ -1016,6 +1048,19 @@ export function renderMaterialMaster() {
         </div>
       `
     });
+
+    const recCloseBtn = document.querySelector('#modal-root [data-modal-close]');
+    if (recCloseBtn) {
+      recCloseBtn.textContent = 'Tutup';
+      recCloseBtn.style.fontSize = '0.78rem';
+      recCloseBtn.style.fontWeight = '600';
+      recCloseBtn.style.color = '#64748B';
+      recCloseBtn.style.background = '#F1F5F9';
+      recCloseBtn.style.border = '1px solid #CBD5E1';
+      recCloseBtn.style.borderRadius = '4px';
+      recCloseBtn.style.padding = '2px 8px';
+      recCloseBtn.style.cursor = 'pointer';
+    }
 
     document.getElementById('modal-btn-close-record-detail')?.addEventListener('click', closeModal);
   }
@@ -1068,8 +1113,7 @@ export function renderMaterialMaster() {
             <label style="font-size: 0.74rem; font-weight: 700; color: #334155;">
               Dokumen Issue Gudang <span style="font-weight: 400; color: #64748B;">(Opsional)</span>
             </label>
-            <button type="button" id="btn-toggle-search-issue" style="background: #F1F5F9; border: 1px solid #CBD5E1; color: #116834; font-size: 0.72rem; font-weight: 700; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.15s ease;">
-              <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <button type="button" id="btn-toggle-search-issue" style="background: #F1F5F9; border: 1px solid #CBD5E1; color: #116834; font-size: 0.72rem; font-weight: 700; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.15s ease;">
               Cari Material
             </button>
           </div>
@@ -1081,19 +1125,18 @@ export function renderMaterialMaster() {
                 type="text" 
                 id="modal-search-issue-input" 
                 placeholder="Ketik nama material (mis: Pupuk, Polybag, Klatak)..." 
-                style="width: 100%; box-sizing: border-box; padding: 6px 26px 6px 26px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.76rem; color: #0F172A; background: #FFFFFF; outline: none;" 
+                style="width: 100%; box-sizing: border-box; padding: 6px 50px 6px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.76rem; color: #0F172A; background: #FFFFFF; outline: none;" 
               />
-              <span style="position: absolute; left: 8px; top: 6px; color: #94A3B8; font-size: 0.72rem; pointer-events: none;">🔍</span>
-              <button type="button" id="btn-clear-search-issue" style="position: absolute; right: 8px; top: 4px; background: none; border: none; color: #94A3B8; font-size: 0.85rem; cursor: pointer; display: none;">×</button>
+              <button type="button" id="btn-clear-search-issue" style="position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: #E2E8F0; border: none; border-radius: 4px; padding: 2px 6px; font-size: 0.68rem; font-weight: 600; color: #475569; cursor: pointer; display: none;">Reset</button>
             </div>
 
             <!-- Quick Filter Chips -->
             <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;">
               <span style="font-size: 0.66rem; color: #64748B; font-weight: 600;">Filter Cepat:</span>
               <button type="button" class="chip-filter-issue" data-filter="" style="background: #E2E8F0; color: #334155; border: none; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Semua</button>
-              <button type="button" class="chip-filter-issue" data-filter="PUPUK" style="background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Pupuk RP</button>
-              <button type="button" class="chip-filter-issue" data-filter="POLYBAG" style="background: #EFF6FF; color: #1E40AF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Polybag</button>
-              <button type="button" class="chip-filter-issue" data-filter="KLATAK" style="background: #F0FDF4; color: #166534; border: 1px solid #BBF7D0; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Biji Karet</button>
+              <button type="button" class="chip-filter-issue" data-filter="PUPUK" style="background: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Pupuk RP</button>
+              <button type="button" class="chip-filter-issue" data-filter="POLYBAG" style="background: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Polybag</button>
+              <button type="button" class="chip-filter-issue" data-filter="KLATAK" style="background: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Biji Karet</button>
             </div>
             <div id="issue-doc-search-status" style="font-size: 0.68rem; color: #116834; font-weight: 600; display: none;"></div>
           </div>
@@ -1128,7 +1171,7 @@ export function renderMaterialMaster() {
           <div id="modal-issue-stock-info" style="display: none; margin-top: 8px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; width: 100%; max-width: 100%; box-sizing: border-box;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
               <span style="font-size: 0.68rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.4px;">Status Kuota Material</span>
-              <span id="info-issue-status-badge" style="font-size: 0.66rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: #DCFCE7; color: #166534; border: 1px solid #BBF7D0;">Utuh / Siap Pakai</span>
+              <span id="info-issue-status-badge" style="display: none;"></span>
             </div>
 
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; text-align: center;">
@@ -1179,18 +1222,54 @@ export function renderMaterialMaster() {
 
     openModal({
       title: 'Catat Penggunaan Material',
-      body: modalBody,
+      className: 'material-modal',
+      body: `
+        <style>
+          .material-modal .modal-close {
+            font-size: 0 !important;
+            width: auto !important;
+            height: auto !important;
+            padding: 3px 8px !important;
+            background: #F1F5F9 !important;
+            border: 1px solid #CBD5E1 !important;
+            border-radius: 4px !important;
+            color: #475569 !important;
+            font-weight: 600 !important;
+            line-height: 1.2 !important;
+            cursor: pointer !important;
+          }
+          .material-modal .modal-close::after {
+            content: "Tutup" !important;
+            font-size: 0.76rem !important;
+            display: inline-block !important;
+          }
+        </style>
+        ${modalBody}
+      `,
       footer: `
-        <div style="display: flex; justify-content: flex-end; gap: 8px; width: 100%;">
-          <button id="modal-btn-cancel-record" type="button" style="background: #F1F5F9; border: 1px solid #CBD5E1; color: #334155; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 0.8rem; cursor: pointer;">
+        <div style="display: flex; gap: 8px; width: 100%; box-sizing: border-box;">
+          <button id="modal-btn-cancel-record" type="button" style="flex: 1; min-width: 0; height: 38px; background: #F1F5F9; border: 1px solid #CBD5E1; color: #334155; padding: 0 8px; border-radius: 6px; font-weight: 600; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; justify-content: center; box-sizing: border-box; text-align: center; white-space: nowrap;">
             Batal
           </button>
-          <button id="modal-btn-submit-record" type="button" style="background: #116834; color: #FFFFFF; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; cursor: pointer; box-shadow: 0 1px 2px rgba(17,104,52,0.25);">
+          <button id="modal-btn-submit-record" type="button" style="flex: 1; min-width: 0; height: 38px; background: #116834; color: #FFFFFF; border: none; padding: 0 8px; border-radius: 6px; font-weight: 700; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; justify-content: center; box-sizing: border-box; text-align: center; white-space: nowrap; box-shadow: 0 1px 2px rgba(17,104,52,0.25);">
             Simpan Pencatatan
           </button>
         </div>
       `
     });
+
+    const createCloseBtn = document.querySelector('#modal-root [data-modal-close]');
+    if (createCloseBtn) {
+      createCloseBtn.textContent = 'Tutup';
+      createCloseBtn.style.fontSize = '0.78rem';
+      createCloseBtn.style.fontWeight = '600';
+      createCloseBtn.style.color = '#64748B';
+      createCloseBtn.style.background = '#F1F5F9';
+      createCloseBtn.style.border = '1px solid #CBD5E1';
+      createCloseBtn.style.borderRadius = '4px';
+      createCloseBtn.style.padding = '2px 8px';
+      createCloseBtn.style.cursor = 'pointer';
+    }
 
     // Update UOM when work allocation dropdown changes
     const selAlloc = document.getElementById('modal-input-allocation-code');
@@ -1240,24 +1319,27 @@ export function renderMaterialMaster() {
       if (infoBadge) {
         if (remQty <= 0) {
           infoBadge.textContent = 'Habis (0 Sisa)';
+          infoBadge.style.display = 'inline-block';
           infoBadge.style.background = '#FEE2E2';
           infoBadge.style.color = '#991B1B';
           infoBadge.style.border = '1px solid #FECACA';
         } else if (usedQty > 0) {
           infoBadge.textContent = 'Sebagian Terpakai';
+          infoBadge.style.display = 'inline-block';
           infoBadge.style.background = '#FEF3C7';
           infoBadge.style.color = '#92400E';
           infoBadge.style.border = '1px solid #FDE68A';
         } else {
-          infoBadge.textContent = 'Utuh / Siap Pakai';
-          infoBadge.style.background = '#DCFCE7';
-          infoBadge.style.color = '#166534';
-          infoBadge.style.border = '1px solid #BBF7D0';
+          // Label "Utuh / Siap Pakai" disembunyikan dari UI sesuai Ketentuan Perubahan UI
+          infoBadge.textContent = '';
+          infoBadge.style.display = 'none';
+          infoBadge.style.background = 'transparent';
+          infoBadge.style.border = 'none';
         }
       }
 
       if (infoNote) {
-        infoNote.innerHTML = `<span>📦 <strong>${esc(itemName)}</strong> &bull; Kuota tersisa: <strong>${remQty.toLocaleString('id-ID')} ${docUom}</strong></span>`;
+        infoNote.innerHTML = `<span><strong>${esc(itemName)}</strong> &bull; Kuota tersisa: <strong>${remQty.toLocaleString('id-ID')} ${docUom}</strong></span>`;
       }
 
       if (inputQty && remQty > 0) {
@@ -1451,16 +1533,7 @@ export function renderMaterialMaster() {
 
     // Sync / Refresh button
     document.getElementById('mat-btn-sync')?.addEventListener('click', () => {
-      const svg = document.getElementById('mat-sync-svg');
-      if (svg) {
-        svg.style.transition = 'transform 0.5s ease';
-        svg.style.transform = 'rotate(360deg)';
-        setTimeout(() => {
-          renderView();
-        }, 300);
-      } else {
-        renderView();
-      }
+      renderView();
     });
 
     // Tab buttons
