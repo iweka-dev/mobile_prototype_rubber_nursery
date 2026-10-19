@@ -247,6 +247,48 @@ assert(allocParit.createdByRole === 'Mantri Bibitan', `Created By role mapped on
 // 5b. TEST REKAM PEMELIHARAAN (HARIAN VS MANDORAN PER ALOKASI PER PEKERJA)
 // ---------------------------------------------------------------------------
 console.log('\n--- 5b. TEST REKAM PEMELIHARAAN (HARIAN VS MANDORAN PER ALOKASI PER PEKERJA) ---');
+const sampleActivities = [
+  {
+    id: 'ACT-2026-001',
+    docNo: 'ACT/NUR/2026/001',
+    activityEntryMode: 'HARIAN',
+    allocationCode: 'A01-01',
+    aktivitas: { id: 'AKT-01', kode: 'A01-01', nama: 'Pemupukan NPK 15-15-15 (Bibitan Utama)' },
+    createdByName: 'Wagiman',
+    createdByRole: 'Mantri Bibitan',
+    pekerja: [
+      { id: 'W-01', workerId: 'W-01', code: 'P001', name: 'Sutrisno', position: 'Pekerja Bibitan', role: 'Pekerja Harian' },
+      { id: 'W-02', workerId: 'W-02', code: 'P002', name: 'Surono', position: 'Pekerja Bibitan', role: 'Pekerja Harian' },
+      { id: 'W-03', workerId: 'W-03', code: 'P003', name: 'Agus', position: 'Pekerja Bibitan', role: 'Pekerja Harian' }
+    ]
+  },
+  {
+    id: 'ACT-2026-002',
+    docNo: 'ACT/NUR/2026/002',
+    activityEntryMode: 'MANDORAN',
+    allocationCode: 'RAW-01',
+    workGroupRoleCode: 'BORONGAN-RAWAT',
+    taskQuantity: 500,
+    createdByName: 'Wagiman',
+    createdByRole: 'Mantri Bibitan',
+    pekerja: [
+      { id: 'W-01', workerId: 'W-01', code: 'P001', name: 'Sutrisno', inputHasil: 600 },
+      { id: 'W-02', workerId: 'W-02', code: 'P002', name: 'Surono', inputHasil: 550 },
+      { id: 'W-03', workerId: 'W-03', code: 'P003', name: 'Agus', inputHasil: 520 }
+    ]
+  },
+  {
+    id: 'ACT-2026-003',
+    docNo: 'ACT/NUR/2026/003',
+    activityEntryMode: 'HARIAN',
+    allocationCode: 'A01-02',
+    createdByName: 'Wagiman',
+    createdByRole: 'Mantri Bibitan',
+    aktivitas: 'Penyiraman Rutin'
+  }
+];
+storage.set('nursery_activity_records', sampleActivities);
+
 const actList = loadTxList('nurseryActivity');
 assert(Array.isArray(actList) && actList.length >= 3, `Nursery Activity records loaded (${actList.length} records)`);
 

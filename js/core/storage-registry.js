@@ -43,6 +43,7 @@ export const DATA_STORAGE_REGISTRY = {
     'entres_menunas_transactions',
     'entres_topping_transactions',
     'materials_transactions',
+    'material_usage_transactions',
     'seeding_transactions',
     'dederan_induk_documents',
     'dederan_transactions',
@@ -133,7 +134,8 @@ export const INDEXEDDB_TX_STORES = [
   'attendance', 'receptions', 'seedings', 'transplantations',
   'buddings', 'inspections', 'regraftings', 'selections',
   'batchTransfers', 'stageTransfers', 'entresActivities',
-  'nurseryActivities', 'requests', 'syncQueue', 'auditLogs', 'photos'
+  'nurseryActivities', 'requests', 'syncQueue', 'auditLogs', 'photos',
+  'approvals', 'batches'
 ];
 
 /**
@@ -259,16 +261,33 @@ export async function cleanAllTransactionalData({
 
   // 5. Bersihkan IndexedDB Transaction Stores
   let indexedDBCleared = false;
+  let indexedDBError = null;
   if (!skipIndexedDB && typeof window !== 'undefined') {
     try {
       const { getDB } = await import('../db/indexeddb.js');
       const db = await getDB();
-      const tx = db.transaction(INDEXEDDB_TX_STORES, 'readwrite');
-      for (const s of INDEXEDDB_TX_STORES) {
-        tx.objectStore(s).clear();
-      }
+      
+      // Tunggu hingga transaksi clear IndexedDB benar-benar selesai di-commit
+      await new Promise((resolve, reject) => {
+        try {
+          const availableStores = INDEXEDDB_TX_STORES.filter(s => db.objectStoreNames.contains(s));
+          if (availableStores.length === 0) {
+            return resolve();
+          }
+          const tx = db.transaction(availableStores, 'readwrite');
+          tx.oncomplete = () => resolve();
+          tx.onerror = (e) => reject(e?.target?.error || new Error('IndexedDB clear tx failed'));
+          tx.onabort = (e) => reject(e?.target?.error || new Error('IndexedDB clear tx aborted'));
+          for (const s of availableStores) {
+            tx.objectStore(s).clear();
+          }
+        } catch (txErr) {
+          reject(txErr);
+        }
+      });
       indexedDBCleared = true;
     } catch (err) {
+      indexedDBError = err;
       console.warn('[StorageCleaner] clear IndexedDB tx stores error:', err);
     }
 
@@ -282,10 +301,11 @@ export async function cleanAllTransactionalData({
   }
 
   return {
-    success: true,
+    success: indexedDBError === null,
     cleanedKeysCount,
     hybridRestored,
     indexedDBCleared,
+    indexedDBError: indexedDBError ? String(indexedDBError.message || indexedDBError) : null,
     timestamp: Date.now()
   };
 }

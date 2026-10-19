@@ -1923,18 +1923,23 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
   // 6. Helper: Simpan / perbarui di verification_transactions HANYA setelah mutasi & update sumber sukses
   const persistVerificationRecord = () => {
     const currentVerifs = storage.get(VERIFICATION_STORAGE_KEY, []);
-    const existIdx = currentVerifs.findIndex(v =>
-      ((v.referenceType || v.moduleType || '').toUpperCase() === (referenceType || '').toUpperCase()) &&
-      (String(v.referenceId) === String(referenceId) || String(v.referenceDocNo) === String(docNo))
-    );
+    let found = false;
+    currentVerifs.forEach((v, i) => {
+      if (
+        (referenceId && String(v.referenceId) === String(referenceId)) ||
+        (docNo && String(v.referenceDocNo) === String(docNo))
+      ) {
+        currentVerifs[i] = {
+          ...v,
+          ...auditRecord,
+          verificationNo: v.verificationNo || verificationNo,
+          verificationStatus: auditRecord.verificationStatus
+        };
+        found = true;
+      }
+    });
 
-    if (existIdx !== -1) {
-      currentVerifs[existIdx] = {
-        ...currentVerifs[existIdx],
-        ...auditRecord,
-        verificationNo: currentVerifs[existIdx].verificationNo || verificationNo
-      };
-    } else {
+    if (!found) {
       currentVerifs.push(auditRecord);
     }
     storage.set(VERIFICATION_STORAGE_KEY, currentVerifs);
@@ -2265,6 +2270,9 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
         }
       } else if (referenceType === 'MATERIAL') {
         targetRecord.materialSubmissionStatus = 'DISETUJUI';
+        targetRecord.status = 'DISETUJUI';
+        targetRecord.isFinal = true;
+        targetRecord.verificationStatus = VERIFICATION_STATUS.TERVERIFIKASI;
         targetRecord.verifiedAt = nowIso;
         targetRecord.verifiedByUserId = currentUser.userId || currentUser.id;
         targetRecord.verifiedByName = currentUser.name || 'Asisten Bibitan';
@@ -2276,6 +2284,9 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
         targetRecord.status = referenceType === 'TIDAK_HADIR' ? 'TERKONFIRMASI' : 'DISETUJUI';
         targetRecord.isFinal = true;
         targetRecord.verificationStatus = referenceType === 'TIDAK_HADIR' ? VERIFICATION_STATUS.DATA_TERKONFIRMASI : VERIFICATION_STATUS.TERVERIFIKASI;
+        if (targetRecord.materialSubmissionStatus) {
+          targetRecord.materialSubmissionStatus = 'DISETUJUI';
+        }
         targetRecord.verifiedAt = nowIso;
         targetRecord.verifiedByUserId = currentUser.userId || currentUser.id;
         targetRecord.verifiedByName = currentUser.name || 'Asisten Bibitan';

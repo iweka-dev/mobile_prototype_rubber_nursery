@@ -593,6 +593,8 @@ export function createManualMaterialRecord(payload = {}, userContext = null) {
     sourceType: 'MANUAL',
     itemCode,
     itemName,
+    allocationCode: payload.allocationCode || itemCode || '',
+    allocationName: payload.allocationName || itemName || '',
     quantity: qty,
     qty,
     uom,

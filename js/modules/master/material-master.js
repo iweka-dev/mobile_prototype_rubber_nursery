@@ -21,6 +21,7 @@ import { getCurrentUserContext } from '../../core/user-context.js';
 import { ROLES } from '../../core/permissions.js';
 import { assertAttendanceGateOrThrow, showAttendanceRequirementModal } from '../../core/attendance-gate-service.js';
 import { toast } from '../../components/toast.js';
+import { WORK_ALLOCATION_MASTER } from '../../data/work-allocation-master.js';
 import {
   getAllMaterials,
   getMaterialByItemCode,
@@ -527,6 +528,8 @@ export function renderMaterialMaster() {
     const usedTxs = getIssueUsageTransactions(doc.id);
 
     const seedingTxs = storage.get('seeding_transactions', []);
+    const receiptTxs = storage.get('receipt_transactions', []);
+    const manualTxs = storage.get('material_usage_transactions', []);
     const allVerifs = storage.get('verification_transactions', []);
 
     const modalBody = `
@@ -623,33 +626,69 @@ export function renderMaterialMaster() {
           ` : `
             <div style="display: flex; flex-direction: column; gap: 8px;">
               ${usedTxs.map(tx => {
-      const sTx = seedingTxs.find(s => s.docNo === tx.docNo || s.id === tx.docNo) || {};
-      const usedPolybag = Number(sTx.totalPolybag !== undefined ? sTx.totalPolybag : (sTx.rows?.[0]?.polybag || 0));
-      const verif = allVerifs.find(v =>
-        ((v.referenceId && String(v.referenceId) === String(tx.docNo)) ||
-          (v.referenceDocNo && String(v.referenceDocNo) === String(tx.docNo))) &&
-        ((v.referenceType || v.moduleType || '').toUpperCase() === 'MATERIAL')
-      );
-      const vStat = (verif?.verificationStatus || sTx.materialSubmissionStatus || sTx.status || '').toUpperCase();
+                const sTx = seedingTxs.find(s => s.docNo === tx.docNo || s.id === tx.docNo) || {};
+                const rTx = receiptTxs.find(r => r.docNo === tx.docNo || r.id === tx.docNo || r.nomorDokumen === tx.docNo) || {};
+                const mTx = manualTxs.find(m => m.docNo === tx.docNo || m.id === tx.docNo) || {};
+                const sourceTx = Object.keys(sTx).length > 0 ? sTx : (Object.keys(rTx).length > 0 ? rTx : mTx);
 
-      let vBadge = { label: 'Belum Dikonfirmasi', style: 'background: #F1F5F9; color: #475569; border: 1px solid #CBD5E1;' };
-      if (vStat === 'TERVERIFIKASI' || vStat === 'DISETUJUI' || vStat === 'VERIFIED' || vStat === 'APPROVED') {
-        vBadge = { label: 'Disetujui ASB', style: 'background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0;' };
-      } else if (vStat === 'DIKEMBALIKAN' || vStat === 'REVISION') {
-        vBadge = { label: 'Perlu Revisi', style: 'background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA;' };
-      } else if (vStat === 'MENUNGGU_VERIFIKASI' || vStat === 'SUBMITTED_TO_ASB') {
-        vBadge = { label: 'Menunggu Verifikasi', style: 'background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A;' };
-      }
+                const isSeeding = Object.keys(sTx).length > 0;
+                const isReceipt = !isSeeding && Object.keys(rTx).length > 0;
+                const docTypeLabel = isSeeding ? 'Dokumen SOW' : (isReceipt ? 'Penerimaan Benih' : 'Catatan Material');
 
-      const batchDisplay = sTx.batchCode || sTx.batchNo || '-';
-      const bedenganDisplay = sTx.bedenganCode || sTx.bedengan || '-';
+                const usedQtyVal = isSeeding
+                  ? Number(sTx.totalPolybag !== undefined ? sTx.totalPolybag : (sTx.rows?.[0]?.polybag || 0))
+                  : (isReceipt ? Number(rTx.jumlahBenih || rTx.qty || 0) : Number(mTx.quantity || mTx.qty || 0));
 
-      return `
+                const batchDisplay = sourceTx.batchCode || sourceTx.batchNo || '-';
+                const bedenganDisplay = sourceTx.bedenganCode || sourceTx.bedengan || '-';
+
+                // 1. Cari verifikasi yang cocok dengan docNo transaksi ini (lintas modul: MATERIAL, PENYEMAIAN, SEEDING, PENERIMAAN)
+                const matchedVerifs = allVerifs.filter(v =>
+                  (v.referenceId && String(v.referenceId) === String(tx.docNo)) ||
+                  (v.referenceDocNo && String(v.referenceDocNo) === String(tx.docNo))
+                );
+
+                // 2. Evaluasi status approval (prioritaskan status yang sudah disetujui / final / terverifikasi)
+                const isApproved = Boolean(
+                  sourceTx.isFinal ||
+                  sourceTx.verifiedAt ||
+                  ['DISETUJUI', 'TERVERIFIKASI', 'VERIFIED', 'APPROVED'].includes(String(sourceTx.status || '').toUpperCase()) ||
+                  ['DISETUJUI', 'TERVERIFIKASI', 'VERIFIED', 'APPROVED'].includes(String(sourceTx.verificationStatus || '').toUpperCase()) ||
+                  ['DISETUJUI', 'TERVERIFIKASI', 'VERIFIED', 'APPROVED'].includes(String(sourceTx.materialSubmissionStatus || '').toUpperCase()) ||
+                  matchedVerifs.some(v => ['TERVERIFIKASI', 'DISETUJUI', 'VERIFIED', 'APPROVED'].includes(String(v.verificationStatus || v.status || '').toUpperCase()))
+                );
+
+                // 3. Evaluasi status revisi/dikembalikan
+                const isReturned = !isApproved && Boolean(
+                  ['DIKEMBALIKAN', 'REVISION'].includes(String(sourceTx.status || '').toUpperCase()) ||
+                  ['DIKEMBALIKAN', 'REVISION'].includes(String(sourceTx.verificationStatus || '').toUpperCase()) ||
+                  ['DIKEMBALIKAN', 'REVISION'].includes(String(sourceTx.materialSubmissionStatus || '').toUpperCase()) ||
+                  matchedVerifs.some(v => ['DIKEMBALIKAN', 'REVISION'].includes(String(v.verificationStatus || v.status || '').toUpperCase()))
+                );
+
+                // 4. Evaluasi status menunggu verifikasi (hanya jika belum disetujui / tidak revisi)
+                const isPending = !isApproved && !isReturned && Boolean(
+                  ['MENUNGGU_VERIFIKASI', 'SUBMITTED_TO_ASB', 'PENDING_ASB'].includes(String(sourceTx.status || '').toUpperCase()) ||
+                  ['MENUNGGU_VERIFIKASI', 'SUBMITTED_TO_ASB', 'PENDING_ASB'].includes(String(sourceTx.submissionStatus || '').toUpperCase()) ||
+                  ['MENUNGGU_VERIFIKASI', 'SUBMITTED_TO_ASB', 'PENDING_ASB'].includes(String(sourceTx.materialSubmissionStatus || '').toUpperCase()) ||
+                  matchedVerifs.some(v => ['MENUNGGU_VERIFIKASI', 'SUBMITTED_TO_ASB', 'PENDING_ASB'].includes(String(v.verificationStatus || v.status || '').toUpperCase()))
+                );
+
+                let vBadge = { label: 'Belum Dikonfirmasi', style: 'background: #F1F5F9; color: #475569; border: 1px solid #CBD5E1;' };
+                if (isApproved) {
+                  vBadge = { label: 'Disetujui ASB', style: 'background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0;' };
+                } else if (isReturned) {
+                  vBadge = { label: 'Perlu Revisi', style: 'background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA;' };
+                } else if (isPending) {
+                  vBadge = { label: 'Menunggu Verifikasi', style: 'background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A;' };
+                }
+
+                return `
                   <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;">
                     <!-- Top row: Doc number & Status badge -->
                     <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                       <div style="min-width: 0;">
-                        <span style="color: #64748B; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; display: block;">Dokumen SOW</span>
+                        <span style="color: #64748B; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; display: block;">${esc(docTypeLabel)}</span>
                         <span style="font-family: monospace; font-size: 0.84rem; font-weight: 800; color: #0F766E;">${esc(tx.docNo)}</span>
                       </div>
                       <span style="display: inline-block; padding: 2px 7px; ${vBadge.style} font-weight: 700; border-radius: 4px; font-size: 0.66rem; white-space: nowrap; flex-shrink: 0;">
@@ -667,13 +706,13 @@ export function renderMaterialMaster() {
                       <div style="text-align: right; flex-shrink: 0;">
                         <span style="color: #64748B; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; display: block; letter-spacing: 0.3px;">Pemakaian</span>
                         <div style="font-size: 0.95rem; font-weight: 800; color: #0F172A; white-space: nowrap; margin-top: 2px;">
-                          ${usedPolybag.toLocaleString('id-ID')} <span style="font-size: 0.7rem; font-weight: 700; color: #0369A1;">${esc(item.uom || 'LBR')}</span>
+                          ${usedQtyVal.toLocaleString('id-ID')} <span style="font-size: 0.7rem; font-weight: 700; color: #0369A1;">${esc(item.uom || 'LBR')}</span>
                         </div>
                       </div>
                     </div>
                   </div>
                 `;
-    }).join('')}
+              }).join('')}
             </div>
           `}
         </div>
@@ -994,28 +1033,124 @@ export function renderMaterialMaster() {
     const allIssues = getAllIssueDocuments();
     const today = todayISO();
 
-    const activeMaterials = allMaterials.filter(m => m.status === 'ACTIVE' || !m.status);
-    const initialMaterial = activeMaterials[0] || {};
+    // Hanya tampilkan alokasi kerja dengan isMaterial = true
+    const materialAllocations = WORK_ALLOCATION_MASTER.filter(a => a.isMaterial === true);
+    const initialAllocation = materialAllocations[0] || {};
 
     const modalBody = `
-      <form id="form-create-material-record" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B; display: flex; flex-direction: column; gap: 12px;">
+      <form id="form-create-material-record" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B; display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: hidden;">
         
-        <!-- 1. MATERIAL SELECTION -->
-        <div>
+        <!-- 1. TANGGAL PENGGUNAAN -->
+        <div style="width: 100%; max-width: 100%; box-sizing: border-box;">
           <label style="display: block; font-size: 0.74rem; font-weight: 700; color: #334155; margin-bottom: 4px;">
-            Pilih Material <span style="color: #DC2626;">*</span>
+            Tanggal Penggunaan <span style="color: #DC2626;">*</span>
           </label>
-          <select id="modal-input-material-code" style="width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.82rem; color: #0F172A; background: #FFFFFF; outline: none; cursor: pointer;">
-            ${activeMaterials.map(m => `
-              <option value="${esc(m.itemCode)}" data-name="${esc(m.itemName)}" data-uom="${esc(m.uom)}">
-                ${esc(m.itemCode)} — ${esc(m.itemName)} (${esc(m.uom)})
+          <input type="date" id="modal-input-date" value="${esc(today)}" required style="width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.82rem; color: #0F172A; outline: none;" />
+        </div>
+
+        <!-- 2. ALOKASI KERJA SELECTION (isMaterial = True) -->
+        <div style="width: 100%; max-width: 100%; box-sizing: border-box;">
+          <label style="display: block; font-size: 0.74rem; font-weight: 700; color: #334155; margin-bottom: 4px;">
+            Pilih Alokasi Kerja <span style="color: #DC2626;">*</span>
+          </label>
+          <select id="modal-input-allocation-code" style="width: 100%; max-width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.82rem; color: #0F172A; background: #FFFFFF; outline: none; cursor: pointer; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
+            ${materialAllocations.map(a => `
+              <option value="${esc(a.allocationCode)}" data-name="${esc(a.allocationName)}" data-uom="${esc(a.uom || 'Unit')}">
+                ${esc(a.allocationCode)}-${esc(a.allocationName)}
               </option>
             `).join('')}
           </select>
         </div>
 
-        <!-- 2. QUANTITY & UOM ROW -->
-        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
+        <!-- 3. DOKUMEN ISSUE GUDANG (SEMUA DOKUMEN ISSUE DENGAN PENCARIAN) -->
+        <div style="width: 100%; max-width: 100%; box-sizing: border-box;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label style="font-size: 0.74rem; font-weight: 700; color: #334155;">
+              Dokumen Issue Gudang <span style="font-weight: 400; color: #64748B;">(Opsional)</span>
+            </label>
+            <button type="button" id="btn-toggle-search-issue" style="background: #F1F5F9; border: 1px solid #CBD5E1; color: #116834; font-size: 0.72rem; font-weight: 700; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.15s ease;">
+              <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              Cari Material
+            </button>
+          </div>
+
+          <!-- Container Pencarian Material (Toggleable) -->
+          <div id="container-search-issue" style="display: none; flex-direction: column; gap: 6px; margin-bottom: 8px; background: #F8FAFC; padding: 8px 10px; border-radius: 6px; border: 1px solid #E2E8F0; width: 100%; max-width: 100%; box-sizing: border-box;">
+            <div style="position: relative; width: 100%;">
+              <input 
+                type="text" 
+                id="modal-search-issue-input" 
+                placeholder="Ketik nama material (mis: Pupuk, Polybag, Klatak)..." 
+                style="width: 100%; box-sizing: border-box; padding: 6px 26px 6px 26px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.76rem; color: #0F172A; background: #FFFFFF; outline: none;" 
+              />
+              <span style="position: absolute; left: 8px; top: 6px; color: #94A3B8; font-size: 0.72rem; pointer-events: none;">🔍</span>
+              <button type="button" id="btn-clear-search-issue" style="position: absolute; right: 8px; top: 4px; background: none; border: none; color: #94A3B8; font-size: 0.85rem; cursor: pointer; display: none;">×</button>
+            </div>
+
+            <!-- Quick Filter Chips -->
+            <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;">
+              <span style="font-size: 0.66rem; color: #64748B; font-weight: 600;">Filter Cepat:</span>
+              <button type="button" class="chip-filter-issue" data-filter="" style="background: #E2E8F0; color: #334155; border: none; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Semua</button>
+              <button type="button" class="chip-filter-issue" data-filter="PUPUK" style="background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Pupuk RP</button>
+              <button type="button" class="chip-filter-issue" data-filter="POLYBAG" style="background: #EFF6FF; color: #1E40AF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Polybag</button>
+              <button type="button" class="chip-filter-issue" data-filter="KLATAK" style="background: #F0FDF4; color: #166534; border: 1px solid #BBF7D0; border-radius: 10px; padding: 2px 7px; font-size: 0.66rem; font-weight: 600; cursor: pointer;">Biji Karet</button>
+            </div>
+            <div id="issue-doc-search-status" style="font-size: 0.68rem; color: #116834; font-weight: 600; display: none;"></div>
+          </div>
+
+          <!-- Select Dokumen Issue Gudang (Format: Dokumen Issue + Material, Max Width 100%) -->
+          <select id="modal-input-issue-doc" style="width: 100%; max-width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.8rem; color: #0F172A; background: #FFFFFF; outline: none; cursor: pointer; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
+            <option value="">-- Tanpa Dokumen Issue --</option>
+            ${allIssues.map(d => {
+              const item = d.items?.[0];
+              const itemName = item?.itemName || d.namaAlokasi || 'Material';
+              const uom = item?.uom || '';
+              const initialQty = Number(d.quantityIssue) || 0;
+              const usedQty = Number(d.usedQuantity) || 0;
+              const remainingQty = Math.max(0, initialQty - usedQty);
+              const isExhausted = remainingQty <= 0;
+              return `
+                <option value="${esc(d.noIssue)}" 
+                  data-itemcode="${esc(item?.itemCode || '')}" 
+                  data-itemname="${esc(itemName)}" 
+                  data-uom="${esc(uom)}"
+                  data-initial-qty="${initialQty}"
+                  data-used-qty="${usedQty}"
+                  data-remaining-qty="${remainingQty}"
+                  ${isExhausted ? 'disabled style="color: #94A3B8; background: #F8FAFC;"' : ''}>
+                  ${esc(d.noIssue)} — ${esc(itemName)}${isExhausted ? ' [HABIS - SISA 0]' : ''}
+                </option>
+              `;
+            }).join('')}
+          </select>
+
+          <!-- Info Ringkasan Kuantitas Dokumen Issue Terpilih -->
+          <div id="modal-issue-stock-info" style="display: none; margin-top: 8px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; width: 100%; max-width: 100%; box-sizing: border-box;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.68rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.4px;">Status Kuota Material</span>
+              <span id="info-issue-status-badge" style="font-size: 0.66rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: #DCFCE7; color: #166534; border: 1px solid #BBF7D0;">Utuh / Siap Pakai</span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; text-align: center;">
+              <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px 4px;">
+                <div style="font-size: 0.62rem; color: #64748B; font-weight: 600;">Kuantitas Awal</div>
+                <div id="info-issue-initial-qty" style="font-size: 0.80rem; font-weight: 800; color: #1E293B; margin-top: 2px;">0</div>
+              </div>
+              <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px 4px;">
+                <div style="font-size: 0.62rem; color: #64748B; font-weight: 600;">Terpakai</div>
+                <div id="info-issue-used-qty" style="font-size: 0.80rem; font-weight: 800; color: #DC2626; margin-top: 2px;">0</div>
+              </div>
+              <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 6px; padding: 6px 4px;">
+                <div style="font-size: 0.62rem; color: #166534; font-weight: 700;">Sisa Saldo</div>
+                <div id="info-issue-remaining-qty" style="font-size: 0.84rem; font-weight: 800; color: #15803D; margin-top: 2px;">0</div>
+              </div>
+            </div>
+            <div id="info-issue-material-note" style="font-size: 0.68rem; color: #64748B; margin-top: 6px;"></div>
+          </div>
+        </div>
+
+        <!-- 4. QUANTITY & UOM ROW (Jumlah Digunakan) -->
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; width: 100%; max-width: 100%; box-sizing: border-box;">
           <div>
             <label style="display: block; font-size: 0.74rem; font-weight: 700; color: #334155; margin-bottom: 4px;">
               Jumlah Digunakan <span style="color: #DC2626;">*</span>
@@ -1027,39 +1162,16 @@ export function renderMaterialMaster() {
             <label style="display: block; font-size: 0.74rem; font-weight: 700; color: #334155; margin-bottom: 4px;">
               Satuan (UOM)
             </label>
-            <input type="text" id="modal-input-uom" value="${esc(initialMaterial.uom || 'Unit')}" readonly style="width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #E2E8F0; border-radius: 6px; font-size: 0.82rem; color: #64748B; background: #F8FAFC; outline: none; font-weight: 700;" />
+            <input type="text" id="modal-input-uom" value="${esc(initialAllocation.uom || 'Unit')}" readonly style="width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #E2E8F0; border-radius: 6px; font-size: 0.82rem; color: #64748B; background: #F8FAFC; outline: none; font-weight: 700;" />
           </div>
         </div>
 
-        <!-- 3. TANGGAL PENGGUNAAN -->
-        <div>
-          <label style="display: block; font-size: 0.74rem; font-weight: 700; color: #334155; margin-bottom: 4px;">
-            Tanggal Penggunaan <span style="color: #DC2626;">*</span>
-          </label>
-          <input type="date" id="modal-input-date" value="${esc(today)}" required style="width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.82rem; color: #0F172A; outline: none;" />
-        </div>
-
-        <!-- 4. DOKUMEN ISSUE GUDANG (OPSIONAL) -->
-        <div>
-          <label style="display: block; font-size: 0.74rem; font-weight: 700; color: #334155; margin-bottom: 4px;">
-            Dokumen Issue Gudang <span style="font-weight: 400; color: #64748B;">(Opsional)</span>
-          </label>
-          <select id="modal-input-issue-doc" style="width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.8rem; color: #334155; background: #FFFFFF; outline: none; cursor: pointer;">
-            <option value="">-- Tanpa Dokumen Issue --</option>
-            ${allIssues.map(d => `
-              <option value="${esc(d.noIssue)}">
-                ${esc(d.noIssue)} — ${esc(d.namaAlokasi)} (${esc(d.tanggal)})
-              </option>
-            `).join('')}
-          </select>
-        </div>
-
         <!-- 5. KETERANGAN / PERUNTUKAN -->
-        <div>
+        <div style="width: 100%; max-width: 100%; box-sizing: border-box;">
           <label style="display: block; font-size: 0.74rem; font-weight: 700; color: #334155; margin-bottom: 4px;">
             Keterangan / Peruntukan <span style="font-weight: 400; color: #64748B;">(Opsional)</span>
           </label>
-          <textarea id="modal-input-notes" rows="2" placeholder="Contoh: Pemupukan rutin bedengan bibitan, sanitasi, dll." style="width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.8rem; color: #0F172A; outline: none; resize: vertical;"></textarea>
+          <textarea id="modal-input-notes" rows="2" placeholder="Contoh: Pemupukan rutin bedengan bibitan, sanitasi, dll." style="width: 100%; max-width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 0.8rem; color: #0F172A; outline: none; resize: vertical;"></textarea>
         </div>
 
       </form>
@@ -1080,14 +1192,168 @@ export function renderMaterialMaster() {
       `
     });
 
-    // Update UOM when material dropdown changes
-    const selMat = document.getElementById('modal-input-material-code');
+    // Update UOM when work allocation dropdown changes
+    const selAlloc = document.getElementById('modal-input-allocation-code');
     const inputUom = document.getElementById('modal-input-uom');
-    selMat?.addEventListener('change', () => {
-      const opt = selMat.selectedOptions[0];
-      if (opt && inputUom) {
-        inputUom.value = opt.getAttribute('data-uom') || 'Unit';
+    const selIssue = document.getElementById('modal-input-issue-doc');
+    const inputQty = document.getElementById('modal-input-qty');
+    const stockInfoCard = document.getElementById('modal-issue-stock-info');
+    const infoBadge = document.getElementById('info-issue-status-badge');
+    const infoInitial = document.getElementById('info-issue-initial-qty');
+    const infoUsed = document.getElementById('info-issue-used-qty');
+    const infoRemaining = document.getElementById('info-issue-remaining-qty');
+    const infoNote = document.getElementById('info-issue-material-note');
+
+    selAlloc?.addEventListener('change', () => {
+      const selectedCode = selAlloc.value;
+      const alloc = materialAllocations.find(a => String(a.allocationCode).trim() === String(selectedCode).trim()) || {};
+      if (inputUom) {
+        inputUom.value = alloc.uom || 'Unit';
       }
+    });
+
+    // Function to update stock info card when issue document is selected
+    function updateIssueDocStockInfo() {
+      const opt = selIssue?.selectedOptions[0];
+      const issueNo = selIssue?.value;
+
+      if (!issueNo || !opt || !stockInfoCard) {
+        if (stockInfoCard) stockInfoCard.style.display = 'none';
+        if (inputQty) {
+          inputQty.removeAttribute('max');
+          inputQty.placeholder = 'Contoh: 50';
+        }
+        return;
+      }
+
+      const initialQty = parseFloat(opt.getAttribute('data-initial-qty') || '0');
+      const usedQty = parseFloat(opt.getAttribute('data-used-qty') || '0');
+      const remQty = parseFloat(opt.getAttribute('data-remaining-qty') || '0');
+      const docUom = opt.getAttribute('data-uom') || 'Unit';
+      const itemName = opt.getAttribute('data-itemname') || 'Material';
+
+      stockInfoCard.style.display = 'block';
+      if (infoInitial) infoInitial.textContent = `${initialQty.toLocaleString('id-ID')} ${docUom}`;
+      if (infoUsed) infoUsed.textContent = `${usedQty.toLocaleString('id-ID')} ${docUom}`;
+      if (infoRemaining) infoRemaining.textContent = `${remQty.toLocaleString('id-ID')} ${docUom}`;
+
+      if (infoBadge) {
+        if (remQty <= 0) {
+          infoBadge.textContent = 'Habis (0 Sisa)';
+          infoBadge.style.background = '#FEE2E2';
+          infoBadge.style.color = '#991B1B';
+          infoBadge.style.border = '1px solid #FECACA';
+        } else if (usedQty > 0) {
+          infoBadge.textContent = 'Sebagian Terpakai';
+          infoBadge.style.background = '#FEF3C7';
+          infoBadge.style.color = '#92400E';
+          infoBadge.style.border = '1px solid #FDE68A';
+        } else {
+          infoBadge.textContent = 'Utuh / Siap Pakai';
+          infoBadge.style.background = '#DCFCE7';
+          infoBadge.style.color = '#166534';
+          infoBadge.style.border = '1px solid #BBF7D0';
+        }
+      }
+
+      if (infoNote) {
+        infoNote.innerHTML = `<span>📦 <strong>${esc(itemName)}</strong> &bull; Kuota tersisa: <strong>${remQty.toLocaleString('id-ID')} ${docUom}</strong></span>`;
+      }
+
+      if (inputQty && remQty > 0) {
+        inputQty.max = remQty;
+        inputQty.placeholder = `Maks. ${remQty.toLocaleString('id-ID')}`;
+      }
+    }
+
+    // Update UOM & stock info if user selects an issue document
+    selIssue?.addEventListener('change', () => {
+      const opt = selIssue.selectedOptions[0];
+      const issueUom = opt?.getAttribute('data-uom');
+      if (issueUom && inputUom) {
+        inputUom.value = issueUom;
+      }
+      updateIssueDocStockInfo();
+    });
+    selIssue?.addEventListener('input', () => {
+      const opt = selIssue.selectedOptions[0];
+      const issueUom = opt?.getAttribute('data-uom');
+      if (issueUom && inputUom) {
+        inputUom.value = issueUom;
+      }
+      updateIssueDocStockInfo();
+    });
+    updateIssueDocStockInfo();
+
+    // Search and filter Dokumen Issue Gudang
+    const btnToggleSearch = document.getElementById('btn-toggle-search-issue');
+    const containerSearch = document.getElementById('container-search-issue');
+    const inputSearch = document.getElementById('modal-search-issue-input');
+    const btnClearSearch = document.getElementById('btn-clear-search-issue');
+    const searchStatus = document.getElementById('issue-doc-search-status');
+
+    function filterIssueOptions(query) {
+      const q = String(query || '').trim().toLowerCase();
+      const options = selIssue?.querySelectorAll('option') || [];
+      let visibleCount = 0;
+
+      options.forEach(opt => {
+        if (!opt.value) {
+          opt.hidden = false;
+          return;
+        }
+        const text = (opt.textContent || '').toLowerCase();
+        const itemCode = (opt.getAttribute('data-itemcode') || '').toLowerCase();
+        const itemName = (opt.getAttribute('data-itemname') || '').toLowerCase();
+        
+        const match = !q || text.includes(q) || itemCode.includes(q) || itemName.includes(q);
+        opt.hidden = !match;
+        if (match) visibleCount++;
+      });
+
+      if (btnClearSearch) {
+        btnClearSearch.style.display = q ? 'block' : 'none';
+      }
+
+      if (searchStatus) {
+        if (q) {
+          searchStatus.style.display = 'block';
+          searchStatus.textContent = `Ditemukan ${visibleCount} dokumen cocok`;
+        } else {
+          searchStatus.style.display = 'none';
+        }
+      }
+    }
+
+    btnToggleSearch?.addEventListener('click', () => {
+      if (!containerSearch) return;
+      const isHidden = containerSearch.style.display === 'none';
+      containerSearch.style.display = isHidden ? 'flex' : 'none';
+      if (isHidden) {
+        inputSearch?.focus();
+      }
+    });
+
+    inputSearch?.addEventListener('input', (e) => {
+      filterIssueOptions(e.target.value);
+    });
+
+    btnClearSearch?.addEventListener('click', () => {
+      if (inputSearch) {
+        inputSearch.value = '';
+        filterIssueOptions('');
+        inputSearch.focus();
+      }
+    });
+
+    containerSearch?.querySelectorAll('.chip-filter-issue').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const filterVal = chip.getAttribute('data-filter') || '';
+        if (inputSearch) {
+          inputSearch.value = filterVal;
+          filterIssueOptions(filterVal);
+        }
+      });
     });
 
     document.getElementById('modal-btn-cancel-record')?.addEventListener('click', closeModal);
@@ -1102,18 +1368,18 @@ export function renderMaterialMaster() {
         return;
       }
 
-      const opt = selMat?.selectedOptions[0];
-      const itemCode = selMat?.value || '';
-      const itemName = opt?.getAttribute('data-name') || '';
-      const uom = opt?.getAttribute('data-uom') || 'Unit';
+      const opt = selAlloc?.selectedOptions[0];
+      const allocationCode = selAlloc?.value || '';
+      const allocationName = opt?.getAttribute('data-name') || '';
+      const uom = inputUom?.value || opt?.getAttribute('data-uom') || 'Unit';
       const qtyStr = document.getElementById('modal-input-qty')?.value;
       const qty = parseFloat(qtyStr);
       const date = document.getElementById('modal-input-date')?.value;
-      const issueDocNo = document.getElementById('modal-input-issue-doc')?.value || '-';
+      const issueDocNo = selIssue?.value || '-';
       const notes = document.getElementById('modal-input-notes')?.value || '-';
 
-      if (!itemCode || !itemName) {
-        toast('Material wajib dipilih.', 'error');
+      if (!allocationCode || !allocationName) {
+        toast('Alokasi kerja wajib dipilih.', 'error');
         return;
       }
       if (isNaN(qty) || qty <= 0) {
@@ -1125,10 +1391,34 @@ export function renderMaterialMaster() {
         return;
       }
 
+      // Derive itemCode & itemName from issue doc if available and validate quota
+      let itemCode = allocationCode;
+      let itemName = allocationName;
+      if (issueDocNo && issueDocNo !== '-') {
+        const doc = allIssues.find(d => d.noIssue === issueDocNo);
+        if (doc) {
+          const rem = Math.max(0, (Number(doc.quantityIssue) || 0) - (Number(doc.usedQuantity) || 0));
+          if (rem <= 0) {
+            toast('Dokumen issue yang dipilih sudah habis (sisa 0) dan tidak dapat digunakan lagi.', 'error');
+            return;
+          }
+          if (qty > rem) {
+            toast(`Jumlah digunakan (${qty.toLocaleString('id-ID')}) melebihi sisa saldo dokumen issue (${rem.toLocaleString('id-ID')} ${doc.items?.[0]?.uom || uom}).`, 'error');
+            return;
+          }
+          if (doc.items?.[0]) {
+            itemCode = doc.items[0].itemCode || allocationCode;
+            itemName = doc.items[0].itemName || allocationName;
+          }
+        }
+      }
+
       try {
         createManualMaterialRecord({
           itemCode,
           itemName,
+          allocationCode,
+          allocationName,
           quantity: qty,
           uom,
           date,
@@ -1139,7 +1429,7 @@ export function renderMaterialMaster() {
         }, userCtx);
 
         closeModal();
-        toast('Pencatatan material manual berhasil disimpan.', 'success');
+        toast('Pencatatan material berhasil disimpan.', 'success');
         activeTab = 'pencatatan';
         renderView();
       } catch (e) {

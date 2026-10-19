@@ -28,6 +28,7 @@ import {
 import { resetDatabase } from '../../db/indexeddb.js';
 import { renderProcessMappingPortal } from '../process-mapping/process-mapping-ui.js';
 import { renderInfoCenterPortal } from '../info-center/info-center-ui.js';
+import { renderFlowProcessTab, attachFlowProcessEvents } from './flow-process-ui.js';
 import { cleanAllTransactionalData } from '../../core/storage-registry.js';
 import { setWorkspaceViewMode } from '../../core/workspace-view.js';
 import {
@@ -445,6 +446,8 @@ const INITIAL_NOTES = [
 ];
 
 let notes = [];
+// Flag konfigurasi visibilitas Tab Flow Proses Aplikasi (disembunyikan sementara)
+export const SHOW_FLOW_PROCESS_TAB = false;
 let activeWorkspaceTab = 'notes'; // 'notes' | 'flow' | 'transactions' | 'process-mapping' | 'info-center'
 let activeTxTab = 'reception'; // 'attendance' | 'reception' | 'seeding' | 'budding' | 'inspection' | 'regrafting' | 'selection' | 'syncQueue'
 let txSearchQuery = '';
@@ -611,7 +614,8 @@ export const TX_MODULES = {
   material: {
     id: 'material',
     title: 'Material & Logistik',
-    subtitle: 'Dokumen Issue & Alokasi Gudang',
+    subtitle: 'Dokumen Issue & Alokasi Gudang (Master Alokasi)',
+    isMasterReference: true,
     icon: 'material',
     route: '/material',
     storageKey: 'issue_documents',
@@ -868,90 +872,9 @@ export function loadTxList(modId) {
     });
   }
   if (modId === 'nurseryActivity') {
-    let items = storage.get('nursery_activity_records', []);
+    const items = storage.get('nursery_activity_records', []);
     if (!items || items.length === 0) {
-      items = [
-        {
-          id: 'ACT-2026-001',
-          docNo: 'ACT/NUR/2026/001',
-          activityEntryMode: 'HARIAN',
-          tanggal: '2026-10-16',
-          aktivitas: { id: 'AKT-01', kode: 'A01-01', nama: 'Pemupukan NPK 15-15-15 (Bibitan Utama)' },
-          allocationCode: 'A01-01',
-          allocationName: 'Pemupukan NPK 15-15-15 (Bibitan Utama)',
-          program: 'PRG/NUR/01/2026',
-          programCode: 'PRG/NUR/01/2026',
-          tahapan: 'Main Nursery',
-          bedengan: 'Bedengan MN-01 s/d MN-04',
-          lokasiBlok: { blok: 'Blok A - MN 01', luas: 2.5, jumlahPokok: 1200 },
-          volumePkk: 1200,
-          uom: 'Pkk',
-          pekerja: [
-            { id: 'W-01', workerId: 'W-01', code: 'P001', name: 'Sutrisno', position: 'Pekerja Bibitan', role: 'Pekerja Harian', statusKerja: 'Hadir Penuh' },
-            { id: 'W-02', workerId: 'W-02', code: 'P002', name: 'Joko Susanto', position: 'Pekerja Bibitan', role: 'Pekerja Harian', statusKerja: 'Hadir Penuh' },
-            { id: 'W-03', workerId: 'W-03', code: 'P003', name: 'Budi Santoso', position: 'Pekerja Bibitan', role: 'Pekerja Harian', statusKerja: 'Hadir Penuh' }
-          ],
-          mandor: 'Wagiman',
-          createdByName: 'Wagiman',
-          status: 'VERIFIED'
-        },
-        {
-          id: 'ACT-2026-002',
-          docNo: 'ACT/NUR/2026/002',
-          activityEntryMode: 'MANDORAN',
-          tanggal: '2026-10-17',
-          aktivitas: { id: 'AKT-02', kode: 'RAW-01', nama: 'Penyiangan Gulma Bedengan Polybag' },
-          allocationCode: 'RAW-01',
-          allocationName: 'Penyiangan Gulma Bedengan Polybag',
-          workGroupRoleCode: 'BORONGAN-RAWAT',
-          workGroupRoleName: 'Pekerja Borongan Rawat',
-          taskQuantity: 500,
-          uom: 'Pkk',
-          program: 'PRG/NUR/01/2026',
-          programCode: 'PRG/NUR/01/2026',
-          tahapan: 'Main Nursery',
-          bedengan: 'Bedengan MN-05 s/d MN-08',
-          lokasiBlok: { blok: 'Blok B - MN 02', luas: 3.0, jumlahPokok: 1800 },
-          pekerja: [
-            { id: 'W-04', workerId: 'W-04', code: 'P004', name: 'Rahmat Hidayat', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 500, inputHasil: 600, resultType: 'TUNTAS', selisihBasis: '+100 Pkk' },
-            { id: 'W-05', workerId: 'W-05', code: 'P005', name: 'Surono', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 500, inputHasil: 550, resultType: 'TUNTAS', selisihBasis: '+50 Pkk' },
-            { id: 'W-06', workerId: 'W-06', code: 'P006', name: 'Agus Priyanto', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 500, inputHasil: 520, resultType: 'TUNTAS', selisihBasis: '+20 Pkk' }
-          ],
-          volumePkk: 1670,
-          totalHasil: 1670,
-          mandor: 'Wagiman',
-          createdByName: 'Wagiman',
-          status: 'CONSOLIDATED'
-        },
-        {
-          id: 'ACT-2026-003',
-          docNo: 'ACT/NUR/2026/003',
-          activityEntryMode: 'MANDORAN',
-          tanggal: '2026-10-17',
-          aktivitas: { id: 'AKT-03', kode: 'RAW-03', nama: 'Penyiraman Bibitan Polybag' },
-          allocationCode: 'RAW-03',
-          allocationName: 'Penyiraman Bibitan Polybag',
-          workGroupRoleCode: 'BORONGAN-RAWAT',
-          workGroupRoleName: 'Pekerja Borongan Rawat',
-          taskQuantity: 400,
-          uom: 'Pkk',
-          program: 'PRG/NUR/01/2026',
-          programCode: 'PRG/NUR/01/2026',
-          tahapan: 'Main Nursery',
-          bedengan: 'Bedengan MN-09 s/d MN-12',
-          lokasiBlok: { blok: 'Blok C - MN 03', luas: 2.0, jumlahPokok: 850 },
-          pekerja: [
-            { id: 'W-07', workerId: 'W-07', code: 'P007', name: 'Hadi Gunawan', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 400, inputHasil: 450, resultType: 'TUNTAS', selisihBasis: '+50 Pkk' },
-            { id: 'W-08', workerId: 'W-08', code: 'P008', name: 'Tri Prasetyo', position: 'Pekerja Borongan', role: 'Pekerja Borongan', taskQuantity: 400, inputHasil: 400, resultType: 'TUNTAS', selisihBasis: '0 Pkk' }
-          ],
-          volumePkk: 850,
-          totalHasil: 850,
-          mandor: 'Supriono',
-          createdByName: 'Supriono',
-          status: 'VERIFIED'
-        }
-      ];
-      storage.set('nursery_activity_records', items);
+      return [];
     }
     return (items || []).map((it, idx) => {
       const isMandoran = (it.activityEntryMode === 'MANDORAN') || !!it.workGroupRoleCode;
@@ -1292,7 +1215,7 @@ function saveNotesLocally() {
 }
 
 function setWorkspaceTab(tab) {
-  if (tab === 'info-center' || tab === 'process-mapping') {
+  if (tab === 'info-center' || tab === 'process-mapping' || (tab === 'flow' && !SHOW_FLOW_PROCESS_TAB)) {
     tab = 'notes';
   }
   activeWorkspaceTab = tab;
@@ -1554,7 +1477,10 @@ export function initReviewWorkspace() {
   const tabParam = params.get('tab');
   if (tabParam && ['notes', 'transactions'].includes(tabParam)) {
     activeWorkspaceTab = tabParam;
+  } else if (tabParam === 'flow' && SHOW_FLOW_PROCESS_TAB) {
+    activeWorkspaceTab = 'flow';
   } else if (tabParam === 'flow' || tabParam === 'info-center' || tabParam === 'process-mapping') {
+    // Sembunyikan tab flow sementara dan fallback aman ke tab 'notes'
     activeWorkspaceTab = 'notes';
     try {
       const url = new URL(window.location.href);
@@ -1681,12 +1607,14 @@ function selectNote(noteId, openDetail = false) {
 
 /** Render Panel Review (Desktop Table & Mobile Cards) */
 export function renderReviewPanel() {
-  if (activeWorkspaceTab === 'flow') {
-    activeWorkspaceTab = 'notes';
-  }
   updateMobileTabBadge();
   const container = document.getElementById('review-panel-container');
   if (!container) return;
+
+  // Pastikan jika tab flow disembunyikan sementara, workspace tidak berada di tab flow
+  if (!SHOW_FLOW_PROCESS_TAB && activeWorkspaceTab === 'flow') {
+    activeWorkspaceTab = 'notes';
+  }
 
   // Filter notes
   const filteredNotes = notes.filter((n) => {
@@ -1725,34 +1653,19 @@ export function renderReviewPanel() {
   let html = `
     <div class="workspace-main-tabs">
       <button class="workspace-main-tab-btn ${activeWorkspaceTab === 'notes' ? 'is-active' : ''}" id="tab-main-notes" type="button">
-        <span>📝</span>
         <span>Catatan Perbaikan</span>
         <span class="tab-badge">${notes.length}</span>
       </button>
-      <!-- [TEMPORARILY DISABLED / COMMENTED OUT] Tab Flow Proses
-      <button class="workspace-main-tab-btn ${activeWorkspaceTab === 'flow' ? 'is-active' : ''}" id="tab-main-flow" type="button">
-        <span>🔄</span>
-        <span>Flow Proses</span>
-        <span class="tab-badge-pulse">${PROCESS_STEPS.length} Tahapan</span>
-      </button>
-      -->
       <button class="workspace-main-tab-btn ${activeWorkspaceTab === 'transactions' ? 'is-active' : ''}" id="tab-main-transactions" type="button">
-        <span>📊</span>
         <span>Data Transaksi</span>
         <span class="tab-badge-pulse" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd;">8 Modul (CRUD)</span>
       </button>
-      <!-- [TEMPORARILY HIDDEN] Tab 3: Pemetaan Alur Proses Aplikasi (Disembunyikan sementara, siap diaktifkan kembali)
-      <button class="workspace-main-tab-btn ${activeWorkspaceTab === 'process-mapping' ? 'is-active' : ''}" id="tab-main-process-mapping" type="button">
-        <span>🗺️</span>
-        <span>Pemetaan Alur Proses Aplikasi</span>
+      ${SHOW_FLOW_PROCESS_TAB ? `
+      <button class="workspace-main-tab-btn ${activeWorkspaceTab === 'flow' ? 'is-active' : ''}" id="tab-main-flow" type="button">
+        <span>Flow Proses Aplikasi</span>
+        <span class="tab-badge-pulse" style="background:#f0fdf4; color:#166534; border:1px solid #bbf7d0;">Audit Terverifikasi</span>
       </button>
-      -->
-      <!-- [TEMPORARILY HIDDEN] Tab 4: Pusat Informasi Aplikasi (Disembunyikan sementara, siap diaktifkan kembali)
-      <button class="workspace-main-tab-btn ${activeWorkspaceTab === 'info-center' ? 'is-active' : ''}" id="tab-main-info-center" type="button">
-        <span>📚</span>
-        <span>Pusat Informasi Aplikasi</span>
-      </button>
-      -->
+      ` : ''}
     </div>
   `;
 
@@ -1924,159 +1837,9 @@ export function renderReviewPanel() {
       }
       </div>
     `;
-  } else if (activeWorkspaceTab === 'flow') {
-    // TAB 2: FLOW PROSES (WORKFLOW PIPELINE)
-    html += `
-      <div class="flow-process-container">
-        <div class="flow-process-header">
-          <div class="flow-process-title-group">
-            <h2>Alur Proses Bisnis Pembibitan Karet (SIGMA Rubber Nursery)</h2>
-            <p>Pemetaan tahapan kerja dari penerimaan benih, Aktifitas Bibitan, Permintaan dan Pengeluaran Bibit.</p>
-          </div>
-          <div class="flow-process-stats">
-            <span class="flow-stat-badge active">${countReadySteps} Modul Siap Uji</span>
-            <span class="flow-stat-badge analysis">${countAnalysisSteps} Tahap Analisis</span>
-          </div>
-        </div>
-
-        <!-- Filter Peran / Kategori Flow & Global Flowchart Toggle -->
-        <div class="flow-role-filter-group">
-          <div class="flow-filters-left">
-            <span class="filter-label">Filter:</span>
-            <button class="flow-role-pill ${flowRoleFilter === 'ALL' ? 'is-active' : ''}" data-flow-filter="ALL" type="button">Semua Tahapan (${PROCESS_STEPS.length})</button>
-            <button class="flow-role-pill ${flowRoleFilter === 'MANTRI_TANAMAN' ? 'is-active' : ''}" data-flow-filter="MANTRI_TANAMAN" type="button">Role Mantri</button>
-            <button class="flow-role-pill ${flowRoleFilter === 'ASISTEN' ? 'is-active' : ''}" data-flow-filter="ASISTEN" type="button">Role Asisten</button>
-            <button class="flow-role-pill ${flowRoleFilter === 'READY' ? 'is-active' : ''}" data-flow-filter="READY" type="button">Siap Uji (${countReadySteps})</button>
-            <button class="flow-role-pill ${flowRoleFilter === 'ANALYSIS' ? 'is-active' : ''}" data-flow-filter="ANALYSIS" type="button">Analisis (${countAnalysisSteps})</button>
-          </div>
-          <div class="flow-filters-right">
-            <button id="btn-expand-all-flow" class="btn-flow-control" type="button">Buka Semua Detail</button>
-            <button id="btn-collapse-all-flow" class="btn-flow-control" type="button">Tutup Semua</button>
-          </div>
-        </div>
-
-        <!-- Timeline Steps -->
-        <div class="flow-timeline">
-          ${filteredSteps.length === 0
-        ? '<div class="review-empty-state">Tidak ada tahapan alur yang sesuai dengan filter.</div>'
-        : filteredSteps
-          .map((step) => {
-            const isExpanded = expandedFlowSteps.has(step.step);
-            const fc = step.flowChart;
-            return `
-            <div class="flow-step-card ${step.status === 'READY' ? 'is-active-module' : 'is-analysis-module'}" data-step="${step.step}">
-              <div class="flow-step-header-row">
-                <div class="flow-step-number-badge">
-                  <span>${String(step.step).padStart(2, '0')}</span>
-                </div>
-                <div class="flow-step-main-meta">
-                  <div class="flow-step-top-line">
-                    <h3 class="flow-step-title">${step.title}</h3>
-                    <span class="flow-step-status-tag ${step.status === 'READY' ? 'ready' : 'analysis'}">${step.statusLabel}</span>
-                    <span class="flow-step-role-tag">${step.roleLabel}</span>
-                  </div>
-                  <div class="flow-step-desc">${step.desc}</div>
-                  <div class="flow-step-meta-info">
-                    <span class="meta-item"><strong>Output:</strong> ${step.output}</span>
-                    <span class="meta-item"><strong>Rute:</strong> <code>#${step.route}</code></span>
-                  </div>
-                </div>
-                <div class="flow-step-actions-cell">
-                  <button class="btn-flow-navigate" data-route="${step.route}" type="button" title="Buka modul di layar mobile">
-                    Buka Layar
-                  </button>
-                  <button class="btn-flow-note" data-route="${step.route}" data-title="${step.title}" type="button" title="Beri catatan perbaikan">
-                    Catatan
-                  </button>
-                </div>
-              </div>
-
-              <!-- Flowchart Toggle Button -->
-              <div class="flow-step-toggle-row">
-                <button class="btn-toggle-flowchart ${isExpanded ? 'is-expanded' : ''}" data-step="${step.step}" type="button">
-                  <span class="toggle-icon">${isExpanded ? '▲' : '▼'}</span>
-                  <span>${isExpanded ? 'Sembunyikan Alur Proses Sistem' : 'Alur Proses Sistem'}</span>
-                </button>
-              </div>
-
-              <!-- Flowchart Stepper Box -->
-              ${isExpanded && fc
-                ? `
-                <div class="flow-step-flowchart-box">
-                  <div class="flowchart-header">
-                    <span class="flowchart-heading">Alur Proses Aplikasi</span>
-                    <span class="flowchart-badge-count">${fc.nodes.length} Tahapan</span>
-                  </div>
-
-                  <div class="flowchart-summary-text">
-                    <strong>Ringkasan Alur:</strong> ${esc(fc.summary)}
-                  </div>
-
-                  <!-- Stepper Sequence List -->
-                  <div class="flowchart-stepper-container">
-                    ${fc.nodes
-                  .map(
-                    (node, nIdx) => `
-                      <div class="flow-stepper-item">
-                        <div class="stepper-indicator-col">
-                          <div class="stepper-dot">${String(nIdx + 1).padStart(2, '0')}</div>
-                          ${nIdx < fc.nodes.length - 1 ? '<div class="stepper-line"></div>' : ''}
-                        </div>
-                        <div class="stepper-content-col">
-                          <div class="stepper-head">
-                            <span class="stepper-node-title">${esc(node.label)}</span>
-                            <span class="stepper-type-pill ${node.type}">${node.type === 'start'
-                        ? 'Inisialisasi'
-                        : node.type === 'process'
-                          ? 'Operasional'
-                          : node.type === 'decision'
-                            ? 'Verifikasi Mutu'
-                            : 'Output Sistem'
-                      }</span>
-                            <span class="stepper-actor-tag">Role: ${esc(node.actor)}</span>
-                          </div>
-                          <div class="stepper-desc">${esc(node.desc)}</div>
-                          ${node.branch ? `<div class="stepper-branch-alert"><strong>Verifikasi:</strong> ${esc(node.branch)}</div>` : ''}
-                        </div>
-                      </div>
-                    `
-                  )
-                  .join('')}
-                  </div>
-
-                  <!-- 3-Column Meta Details -->
-                  <div class="flowchart-meta-grid">
-                    <div class="flowchart-meta-box">
-                      <div class="flowchart-meta-box-title">Prasyarat & Input Data</div>
-                      <ul class="flowchart-meta-box-list">
-                        ${fc.inputs.map((inp) => `<li>${esc(inp)}</li>`).join('')}
-                      </ul>
-                    </div>
-                    <div class="flowchart-meta-box">
-                      <div class="flowchart-meta-box-title">Output & Dokumen Sistem</div>
-                      <ul class="flowchart-meta-box-list">
-                        ${fc.outputs.map((out) => `<li>${esc(out)}</li>`).join('')}
-                      </ul>
-                    </div>
-                    <div class="flowchart-meta-box">
-                      <div class="flowchart-meta-box-title">Ketentuan SOP Kebun</div>
-                      <ul class="flowchart-meta-box-list">
-                        ${fc.sopRules.map((rule) => `<li>${esc(rule)}</li>`).join('')}
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              `
-                : ''
-              }
-            </div>
-          `;
-          })
-          .join('')
-      }
-        </div>
-      </div>
-    `;
+  } else if (activeWorkspaceTab === 'flow' && SHOW_FLOW_PROCESS_TAB) {
+    // TAB 3: FLOW PROSES APLIKASI (3-TIER ENTERPRISE ARCHITECTURE)
+    html += renderFlowProcessTab();
   } else if (activeWorkspaceTab === 'transactions') {
     html += renderTransactionsWorkspaceTab();
   } else if (activeWorkspaceTab === 'process-mapping') {
@@ -2099,10 +1862,12 @@ export function renderReviewPanel() {
     renderReviewPanel();
   });
 
-  container.querySelector('#tab-main-flow')?.addEventListener('click', () => {
-    setWorkspaceTab('flow');
-    renderReviewPanel();
-  });
+  if (SHOW_FLOW_PROCESS_TAB) {
+    container.querySelector('#tab-main-flow')?.addEventListener('click', () => {
+      setWorkspaceTab('flow');
+      renderReviewPanel();
+    });
+  }
 
   container.querySelector('#tab-main-transactions')?.addEventListener('click', () => {
     setWorkspaceTab('transactions');
@@ -2140,68 +1905,9 @@ export function renderReviewPanel() {
     return;
   }
 
-  if (activeWorkspaceTab === 'flow') {
-    // Flow Role Filter Pills
-    container.querySelectorAll('.flow-role-pill[data-flow-filter]').forEach((pill) => {
-      pill.addEventListener('click', () => {
-        flowRoleFilter = pill.dataset.flowFilter;
-        renderReviewPanel();
-      });
-    });
-
-    // Expand All / Collapse All Flowcharts
-    container.querySelector('#btn-expand-all-flow')?.addEventListener('click', () => {
-      PROCESS_STEPS.forEach((s) => expandedFlowSteps.add(s.step));
+  if (activeWorkspaceTab === 'flow' && SHOW_FLOW_PROCESS_TAB) {
+    attachFlowProcessEvents(container, () => {
       renderReviewPanel();
-    });
-
-    container.querySelector('#btn-collapse-all-flow')?.addEventListener('click', () => {
-      expandedFlowSteps.clear();
-      renderReviewPanel();
-    });
-
-    // Individual Flowchart Toggle Buttons
-    container.querySelectorAll('.btn-toggle-flowchart').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const stepNum = parseInt(btn.dataset.step, 10);
-        if (expandedFlowSteps.has(stepNum)) {
-          expandedFlowSteps.delete(stepNum);
-        } else {
-          expandedFlowSteps.add(stepNum);
-        }
-        renderReviewPanel();
-      });
-    });
-
-    // Flow Navigate Button (Langsung Buka Halaman di Frame HP)
-    container.querySelectorAll('.btn-flow-navigate').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const route = btn.dataset.route;
-        if (route) {
-          navigate(route);
-          toast(`Menampilkan layar prototype: ${route}`, 'info');
-
-          // Bila di layar mobile (< 768px), otomatis switch ke mode HP
-          if (window.innerWidth < 768) {
-            setWorkspaceViewMode('hp');
-          }
-        }
-      });
-    });
-
-    // Flow Note Button (Navigasi ke halaman + buka mode tambah catatan)
-    container.querySelectorAll('.btn-flow-note').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const route = btn.dataset.route;
-        if (route) {
-          navigate(route);
-          activeWorkspaceTab = 'notes';
-          isReviewMode = true;
-          renderReviewPanel();
-          updateMarkers();
-          toast('Mode Pin Marker aktif! Klik pada layar HP untuk menaruh pin catatan.', 'info');
-        }
-      });
     });
     return;
   }
@@ -2791,10 +2497,10 @@ function renderTransactionsWorkspaceTab() {
         const isActive = m.id === activeTxTab;
         const count = loadTxList(m.id).length;
         return `
-            <button class="tx-module-tab tx-sub-tab-btn ${isActive ? 'is-active' : ''}" data-mod="${m.id}" type="button">
+            <button class="tx-module-tab tx-sub-tab-btn ${isActive ? 'is-active' : ''}" data-mod="${m.id}" type="button" title="${m.isMasterReference ? 'Master Dokumen Alokasi Gudang Pusat (Referensi kuota alokasi bahan)' : esc(m.subtitle)}">
               <span class="tx-module-tab-icon">${getTxModuleIconSvg(m.id, 14)}</span>
               <span>${esc(m.title)}</span>
-              <span class="tx-module-tab-count">${count}</span>
+              <span class="tx-module-tab-count" ${m.isMasterReference ? 'style="background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1;" title="Master Dokumen Alokasi"' : ''}>${count}</span>
             </button>
           `;
       })
@@ -3968,24 +3674,30 @@ function attachTransactionsWorkspaceEvents(container) {
   // Reset / Bersihkan Seluruh Data Transaksi
   container.querySelector('#btn-tx-reset-all')?.addEventListener('click', () => {
     openModal({
-      title: 'Kosongkan Seluruh Data Transaksi & Afkir',
+      title: 'Kosongkan Seluruh Data Transaksi Operasional',
       body: `
         <div style="text-align: center; padding: 12px 0;">
           <div style="width: 48px; height: 48px; border-radius: 50%; background: #fee2e2; color: #dc2626; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px;">
             <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
           </div>
-          <h3 style="font-size: 1rem; font-weight: 800; color: #991b1b; margin: 0 0 8px;">Hapus Bersih Semua Data Transaksi?</h3>
-          <p style="font-size: 0.82rem; color: #334155; line-height: 1.5; margin: 0 0 12px;">
-            Tindakan ini akan <strong>menghapus seluruh data operasional</strong> di prototype, termasuk:
-            <br>&bull; Penerimaan Benih & Bibit APM
-            <br>&bull; Batching & Bedengan Penyemaian
-            <br>&bull; Okulasi & Okulasi Janda (Regrafting)
-            <br>&bull; Pemeriksaan Okulasi (Hasil Sukses vs Gagal)
-            <br>&bull; <strong>Daftar Bibit Afkir / Penyeleksian (Selection Pool)</strong>
-            <br>&bull; Presensi & Antrean Sinkronisasi
+          <h3 style="font-size: 1rem; font-weight: 800; color: #991b1b; margin: 0 0 8px;">Hapus Bersih Semua Data Transaksi Operasional?</h3>
+          <p style="font-size: 0.82rem; color: #334155; line-height: 1.5; margin: 0 0 12px; text-align: left;">
+            Tindakan ini akan <strong>menghapus bersih seluruh transaksi operasional</strong> di prototype ke kondisi 0 data:
+            <br>&bull; Permintaan & Pengiriman Bibit (SPB / Surat Jalan)
+            <br>&bull; Penerimaan Benih, Bedengan & Penyemaian (Dederan)
+            <br>&bull; Okulasi, Okulasi Janda (Regrafting) & Pemeriksaan Okulasi
+            <br>&bull; <strong>Daftar Bibit Afkir, Berita Acara (BAPB) & Pemusnahan</strong>
+            <br>&bull; Presensi Pekerja & Antrean Sinkronisasi Offline
+            <br>&bull; Transaksi Pemakaian Material & Form Drafts
           </p>
+          <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px; font-size: 0.75rem; color: #475569; text-align: left; margin-bottom: 8px;">
+            <strong style="color: #0f172a;">🛡️ Data yang Dijamin Tetap Utuh:</strong>
+            <br>&bull; Sesi Login & Akun Pengguna Aktif
+            <br>&bull; Master Data (Estate, Afdeling, Klon, Blok, Pekerja, Material)
+            <br>&bull; Master Dokumen Alokasi Gudang Pusat (61 Dokumen Issue)
+          </div>
           <div style="background: #fef2f2; border: 1px dashed #f87171; border-radius: 6px; padding: 8px; font-size: 0.75rem; color: #b91c1c;">
-            Seluruh layar prototype di frame HP akan otomatis kembali bersih (0 data).
+            Seluruh tabel monitoring transaksi operasional akan kembali 0 record.
           </div>
         </div>
       `,
@@ -3997,18 +3709,34 @@ function attachTransactionsWorkspaceEvents(container) {
 
     const root = document.getElementById('modal-root');
     root.querySelector('[data-reset-cancel]')?.addEventListener('click', closeModal);
-    root.querySelector('#btn-confirm-reset-all')?.addEventListener('click', async () => {
-      // Eksekusi pembersihan transaksi dinamis terpusat berbasis registry
-      await cleanAllTransactionalData();
+    const confirmBtn = root.querySelector('#btn-confirm-reset-all');
+    confirmBtn?.addEventListener('click', async () => {
+      try {
+        if (confirmBtn) {
+          confirmBtn.disabled = true;
+          confirmBtn.innerHTML = '<span>Sedang Membersihkan...</span>';
+        }
 
-      closeModal();
-      toast('Seluruh data transaksi dan testing telah dibersihkan!', 'success');
-      renderReviewPanel();
+        // Eksekusi pembersihan transaksi dinamis terpusat berbasis registry
+        const res = await cleanAllTransactionalData();
 
-      // Refresh frame HP jika sedang di halaman yang relevan
-      const cur = getCurrent();
-      if (cur?.route) {
-        navigate(cur.route);
+        closeModal();
+        if (res && res.success === false) {
+          toast('Pembersihan selesai dengan catatan IndexedDB.', 'warning');
+        } else {
+          toast('Seluruh data transaksi operasional telah bersih (0 data)! Master & alokasi gudang tetap utuh.', 'success');
+        }
+        renderReviewPanel();
+
+        // Refresh frame HP jika sedang di halaman yang relevan
+        const cur = getCurrent();
+        if (cur?.route) {
+          navigate(cur.route);
+        }
+      } catch (err) {
+        closeModal();
+        console.error('Reset all error:', err);
+        toast('Gagal membersihkan data: ' + (err?.message || err), 'danger');
       }
     });
   });

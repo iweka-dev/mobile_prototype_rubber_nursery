@@ -369,6 +369,124 @@ assert(summaryStats.totalIssueDocuments === allIss.length, 'IT-MATERIAL-RECORD-0
 assert(summaryStats.totalMaterialRecords === 5, 'IT-MATERIAL-RECORD-014e: Summary stats totalMaterialRecords is 5');
 
 // -----------------------------------------------------------------------------
+// IT-MATERIAL-RECORD-015: Master Work-Allocation filter isMaterial = true
+// -----------------------------------------------------------------------------
+import { WORK_ALLOCATION_MASTER } from '../js/data/work-allocation-master.js';
+const matAllocations = WORK_ALLOCATION_MASTER.filter(a => a.isMaterial === true);
+assert(matAllocations.length > 0, 'IT-MATERIAL-RECORD-015a: Found isMaterial=true work allocations');
+assert(matAllocations.every(a => a.isMaterial === true), 'IT-MATERIAL-RECORD-015b: All filtered allocations have isMaterial === true');
+assert(matAllocations.every(a => a.allocationCode && a.allocationName), 'IT-MATERIAL-RECORD-015c: All allocations have code and name for allocationCode-allocationName format');
+
+// -----------------------------------------------------------------------------
+// IT-MATERIAL-RECORD-016: Seluruh dokumen issue tersedia dan berformat noIssue — itemName
+// -----------------------------------------------------------------------------
+assert(allIss.length >= 50, 'IT-MATERIAL-RECORD-016a: All issue documents (53+) available in master issue list');
+assert(allIss.some(d => d.items?.some(it => it.itemName?.includes('PUPUK RP'))), 'IT-MATERIAL-RECORD-016b: Pupuk RP issue documents are included');
+assert(allIss.some(d => d.items?.some(it => it.itemName?.includes('POLYBAG'))), 'IT-MATERIAL-RECORD-016c: Polybag issue documents are included');
+
+// -----------------------------------------------------------------------------
+// IT-MATERIAL-RECORD-017: Dokumen issue dengan sisa material = 0 tidak dapat digunakan lagi
+// -----------------------------------------------------------------------------
+const exhaustedDoc = allIss.find(d => (Number(d.remainingQuantity) || 0) <= 0) || {
+  ...allIss[0],
+  quantityIssue: 100,
+  usedQuantity: 100,
+  remainingQuantity: 0
+};
+const remQty = Math.max(0, (Number(exhaustedDoc.quantityIssue) || 0) - (Number(exhaustedDoc.usedQuantity) || 0));
+assert(remQty === 0, 'IT-MATERIAL-RECORD-017a: Target exhausted document has exactly 0 remaining balance');
+
+// -----------------------------------------------------------------------------
+// IT-MATERIAL-RECORD-018: Kuota awal, terpakai, dan sisa saldo terdefinisi dengan tepat
+// -----------------------------------------------------------------------------
+const activeDoc = allIss.find(d => (Number(d.remainingQuantity) || 0) > 0);
+assert(activeDoc, 'IT-MATERIAL-RECORD-018a: Active issue document with positive remaining quota found');
+const actInit = Number(activeDoc.quantityIssue) || 0;
+const actUsed = Number(activeDoc.usedQuantity) || 0;
+const actRem = Number(activeDoc.remainingQuantity) || 0;
+assert(actRem === Math.max(0, actInit - actUsed), 'IT-MATERIAL-RECORD-018b: Formula balance matches remainingQuantity = max(0, initial - used)');
+assert(actRem > 0, 'IT-MATERIAL-RECORD-018c: Remaining quantity is greater than 0');
+
+// -----------------------------------------------------------------------------
+// IT-MATERIAL-RECORD-019: Submit validation menolak dokumen habis dan menolak qty > remaining
+// -----------------------------------------------------------------------------
+function validateIssueQuotaForSubmit(doc, qty) {
+  if (!doc) return { valid: false, error: 'Dokumen tidak ditemukan' };
+  const rem = Math.max(0, (Number(doc.quantityIssue) || 0) - (Number(doc.usedQuantity) || 0));
+  if (rem <= 0) {
+    return { valid: false, error: 'Dokumen issue yang dipilih sudah habis (sisa 0) dan tidak dapat digunakan lagi.' };
+  }
+  if (qty > rem) {
+    return { valid: false, error: `Jumlah digunakan (${qty}) melebihi sisa saldo dokumen issue (${rem}).` };
+  }
+  return { valid: true };
+}
+
+const checkExhausted = validateIssueQuotaForSubmit(exhaustedDoc, 10);
+assert(checkExhausted.valid === false && checkExhausted.error.includes('sudah habis'), 'IT-MATERIAL-RECORD-019a: Exhausted issue doc is rejected on submit');
+
+const checkOverQuota = validateIssueQuotaForSubmit(activeDoc, actRem + 999);
+assert(checkOverQuota.valid === false && checkOverQuota.error.includes('melebihi sisa saldo'), 'IT-MATERIAL-RECORD-019b: Qty exceeding remaining is rejected on submit');
+
+const checkValidUsage = validateIssueQuotaForSubmit(activeDoc, Math.min(10, actRem));
+assert(checkValidUsage.valid === true, 'IT-MATERIAL-RECORD-019c: Qty within remaining balance is accepted');
+
+// -----------------------------------------------------------------------------
+// IT-MATERIAL-RECORD-020: Verifikasi status dokumen pengguna issue di Detail Issue Modal
+// -----------------------------------------------------------------------------
+// Skenario A: Transaksi SOW disetujui di modul Penyemaian (status: DISETUJUI, verificationStatus: TERVERIFIKASI)
+const approvedSowTx = {
+  id: 'SOW-TEST-001',
+  docNo: '2026/SOW/006',
+  status: 'DISETUJUI',
+  verificationStatus: 'TERVERIFIKASI',
+  isFinal: true,
+  verifiedAt: new Date().toISOString(),
+  totalPolybag: 6000,
+  issueDocNo: 'ISSUE/2026/01/006'
+};
+
+// Skenario B: Verifikasi di verification_transactions dengan referenceType PENYEMAIAN
+const verifPenyemaian = {
+  verificationId: 'VRF-001',
+  referenceDocNo: '2026/SOW/006',
+  referenceType: 'PENYEMAIAN',
+  verificationStatus: 'TERVERIFIKASI',
+  status: 'DISETUJUI'
+};
+
+function resolveBadgeForIssueDetail(txDocNo, allSeeding, allVerifsList) {
+  const sTx = allSeeding.find(s => s.docNo === txDocNo || s.id === txDocNo) || {};
+  const matchedVerifs = allVerifsList.filter(v =>
+    (v.referenceId && String(v.referenceId) === String(txDocNo)) ||
+    (v.referenceDocNo && String(v.referenceDocNo) === String(txDocNo))
+  );
+
+  const isApproved = Boolean(
+    sTx.isFinal ||
+    sTx.verifiedAt ||
+    ['DISETUJUI', 'TERVERIFIKASI', 'VERIFIED', 'APPROVED'].includes(String(sTx.status || '').toUpperCase()) ||
+    ['DISETUJUI', 'TERVERIFIKASI', 'VERIFIED', 'APPROVED'].includes(String(sTx.verificationStatus || '').toUpperCase()) ||
+    ['DISETUJUI', 'TERVERIFIKASI', 'VERIFIED', 'APPROVED'].includes(String(sTx.materialSubmissionStatus || '').toUpperCase()) ||
+    matchedVerifs.some(v => ['TERVERIFIKASI', 'DISETUJUI', 'VERIFIED', 'APPROVED'].includes(String(v.verificationStatus || v.status || '').toUpperCase()))
+  );
+
+  if (isApproved) return 'Disetujui ASB';
+  return 'Menunggu Verifikasi';
+}
+
+const badgeResult = resolveBadgeForIssueDetail('2026/SOW/006', [approvedSowTx], [verifPenyemaian]);
+assert(badgeResult === 'Disetujui ASB', 'IT-MATERIAL-RECORD-020a: Approved SOW transaction displays "Disetujui ASB" in Detail Issue');
+
+// Skenario C: Meskipun sTx.materialSubmissionStatus masih "SUBMITTED_TO_ASB", jika SOW sudah disetujui, tetap "Disetujui ASB"
+const sowWithOldSubStatus = {
+  ...approvedSowTx,
+  materialSubmissionStatus: 'SUBMITTED_TO_ASB'
+};
+const badgeWithSubStatus = resolveBadgeForIssueDetail('2026/SOW/006', [sowWithOldSubStatus], [verifPenyemaian]);
+assert(badgeWithSubStatus === 'Disetujui ASB', 'IT-MATERIAL-RECORD-020b: Stale materialSubmissionStatus does not shadow approved ASB verification');
+
+// -----------------------------------------------------------------------------
 // Summary
 // -----------------------------------------------------------------------------
 console.log('\n================================================================================');

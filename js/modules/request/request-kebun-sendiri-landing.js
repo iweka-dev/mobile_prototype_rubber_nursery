@@ -795,6 +795,14 @@ export async function renderRequestKebunSendiriLanding() {
 
   // Event Listeners
   app.querySelector('#btn-back-request')?.addEventListener('click', () => {
+    const userCtx = getCurrentUserContext();
+    const userRole = normalizeRole(userCtx?.role || userCtx?.rawRole);
+    // Jika Mantri atau Asisten (yang tidak memiliki sub-menu hub / otomatis diarahkan dari beranda),
+    // tombol kembali harus mengarahkan ke Beranda (/home) agar tidak loop redirect dengan /request
+    if (userRole === 'MANTRI_TANAMAN' || userRole === 'MANTRI' || userRole === 'ASISTEN') {
+      navigate('/home');
+      return;
+    }
     navigate('/request');
   });
 

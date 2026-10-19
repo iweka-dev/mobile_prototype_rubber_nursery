@@ -77,7 +77,7 @@ assert(appSrc.includes("registerRoute('/request/mata-entres', renderRequestMataE
 
 // IT-REQ-NAV-007: Role/permission existing tetap berlaku
 const mantriSubmenus = getSubMenuItemsForRole('MANTRI_TANAMAN');
-assert(mantriSubmenus.length === 2 && mantriSubmenus.some(s => s.route === '/request/kebun-sepupu') && mantriSubmenus.some(s => s.route === '/request/mata-entres'), 'IT-REQ-NAV-007: Mantri sees exactly 2 submenus (kebun-sepupu & mata-entres)');
+assert(mantriSubmenus.length === 1 && mantriSubmenus[0].route === '/request/kebun-sendiri', 'IT-REQ-NAV-007: Mantri sees exactly 1 submenu (kebun-sendiri)');
 
 const asbSubmenus = getSubMenuItemsForRole('ASISTEN_BIBITAN');
 assert(asbSubmenus.length === 3 && asbSubmenus.some(s => s.route === '/request/kebun-sendiri') && asbSubmenus.some(s => s.route === '/request/kebun-sepupu') && asbSubmenus.some(s => s.route === '/request/mata-entres'), 'IT-REQ-NAV-007: ASB sees exactly 3 submenus with verification labels');
@@ -92,6 +92,10 @@ assert(menuPermintaanReg && menuPermintaanReg.status === 'ACTIVE', 'IT-REQ-NAV-0
 // IT-REQ-NAV-009: Back dari /request tetap menuju /home
 const requestLandingSrc = fs.readFileSync('js/modules/request/request-landing.js', 'utf-8');
 assert(requestLandingSrc.includes("navigate('/home');"), 'IT-REQ-NAV-009: Back button from /request navigates to /home');
+
+// IT-REQ-NAV-011: Back dari /request/kebun-sendiri untuk Mantri/Asisten menuju /home agar tidak loop
+const kebunSendiriSrc = fs.readFileSync('js/modules/request/request-kebun-sendiri-landing.js', 'utf-8');
+assert(kebunSendiriSrc.includes("userRole === 'MANTRI_TANAMAN'") && kebunSendiriSrc.includes("navigate('/home');"), 'IT-REQ-NAV-011: Back button on /request/kebun-sendiri navigates to /home for Mantri');
 
 // IT-REQ-NAV-010: Tidak ada duplicate menu "Permintaan Bibit" pada role lain
 const pengurusMenusMatch = berandaSrc.match(/PENGURUS_MENU_ITEMS\s*=\s*\[([\s\S]*?)\];/);

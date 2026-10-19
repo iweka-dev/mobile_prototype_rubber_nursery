@@ -151,6 +151,8 @@ storage.set('entres_menunas_transactions', [{ id: 'MN-001', jumlah: 100 }]);
 storage.set('entres_topping_transactions', [{ id: 'TP-001', jumlah: 100 }]);
 storage.set('nursery_activity_records', [{ id: 'ACT-001', docNo: 'ACT-001', aktivitas: 'Pemupukan' }]);
 storage.set('materials_transactions', [{ id: 'MAT-001', currentStock: 50 }]);
+storage.set('material_usage_transactions', [{ id: 'MUT-001', materialName: 'Pupuk Urea', qty: 25 }]);
+storage.set('issue_documents', [{ id: 'ISD-001', docNo: 'ISD-001', material: 'Pupuk Urea', quantityIssue: 100 }]);
 storage.set('attendance_transactions', [{ id: 'ATT-001', hadir: 10 }]);
 storage.set('sync_queue', [{ id: 'SYNC-001', action: 'CREATE' }]);
 
@@ -217,6 +219,9 @@ const curSession = storage.get('sigma_session', null);
 const curUserContext = storage.get('user_context', null);
 assert(curSession && curSession.user === 'user_askep_apm', 'B15. Session login tetap utuh & aktif');
 assert(curUserContext && curUserContext.role === 'ASISTEN_KEPALA', 'B16. User context / persona tetap utuh');
+
+const curIssueDocs = storage.get('issue_documents', []);
+assert(curIssueDocs && curIssueDocs.length === 1, 'B17. Master Dokumen Alokasi Gudang (issue_documents) tetap terlindungi/utuh');
 
 // -------------------------------------------------------------------------
 // SECTION C: FUTURE MODULE TEST (DYNAMIC REGISTRATION INJECTION)
