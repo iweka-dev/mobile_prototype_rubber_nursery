@@ -309,23 +309,25 @@ export function getActionableSendiriCount(requests, currentUser) {
  * Helper status label & badge style
  */
 export function getStatusBadge(status) {
-  const s = (status || '').toUpperCase();
+  const s = String(status || '').trim().toUpperCase();
   switch (s) {
     case 'MENUNGGU_VERIFIKASI_ASISTEN_KEPALA':
     case 'DIAJUKAN':
-      return { label: 'Menunggu Verifikasi Askep', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' };
+      return { label: 'Menunggu Askep', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' };
     case 'MENUNGGU_VERIFIKASI_PENGURUS':
     case 'MENUNGGU_REVIEW_PENGURUS':
-      return { label: 'Menunggu Review Pengurus', color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' };
+      return { label: 'Disetujui Askep', color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' };
     case 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN':
-      return { label: 'Menunggu Verifikasi ASB', color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' };
+      return { label: 'Disetujui Pengurus', color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' };
     case 'TERVERIFIKASI':
-      return { label: 'Terverifikasi (Siap Pengeluaran)', color: '#0D9488', bg: '#CCFBF1', border: '#99F6E4' };
+      return { label: 'Siap Dikeluarkan', color: '#0D9488', bg: '#CCFBF1', border: '#99F6E4' };
+    case 'PENGELUARAN_BERJALAN':
+      return { label: 'Pengeluaran Berjalan', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' };
     case 'MENUNGGU_VERIFIKASI_PENGELUARAN':
     case 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN_PENGELUARAN':
-      return { label: 'Menunggu Verifikasi Pengeluaran ASB', color: '#EA580C', bg: '#FFEDD5', border: '#FED7AA' };
+      return { label: 'Menunggu Verifikasi Asisten Bibitan', color: '#EA580C', bg: '#FFEDD5', border: '#FED7AA' };
     case 'MENUNGGU_PENERIMAAN':
-      return { label: 'Menunggu Penerimaan Pemohon', color: '#B45309', bg: '#FEF3C7', border: '#FCD34D' };
+      return { label: 'Menunggu Penerimaan', color: '#B45309', bg: '#FEF3C7', border: '#FCD34D' };
     case 'SELESAI':
       return { label: 'Selesai Diterima', color: '#16A34A', bg: '#DCFCE7', border: '#BBF7D0' };
     case 'DITOLAK':
@@ -335,7 +337,7 @@ export function getStatusBadge(status) {
     case 'PERLU_REVISI_PENGURUS':
       return { label: 'Perlu Revisi Pengurus', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' };
     default:
-      return { label: status || 'Diajukan', color: '#64748B', bg: '#F1F5F9', border: '#E2E8F0' };
+      return { label: 'Tidak Diketahui', color: '#64748B', bg: '#F1F5F9', border: '#E2E8F0' };
   }
 }
 
@@ -494,7 +496,7 @@ export async function renderRequestKebunSendiriLanding() {
     } else if (canAsbVerify) {
       actionBtnHtml = `
         <button class="btn-action-asb-verify" data-id="${esc(tx.id)}" type="button" style="width: 100%; min-height: 46px; background: #116834; color: #FFFFFF; font-weight: 700; font-size: 0.88rem; border: none; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(17,104,52,0.2);">
-          Verifikasi Ketersediaan Nursery (Asisten Pembibitan)
+          Verifikasi dan Proses
         </button>
       `;
     } else if (canAsbDispatchVerif) {

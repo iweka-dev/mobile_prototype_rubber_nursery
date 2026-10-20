@@ -690,7 +690,7 @@ export async function processDispatchShipment(parentRequest, formValues, current
   let nextStatusLabel;
   if (isKebunSendiri) {
     nextStatus = isCompleted ? 'MENUNGGU_VERIFIKASI_PENGELUARAN' : 'PENGELUARAN_BERJALAN';
-    nextStatusLabel = isCompleted ? 'Menunggu Verifikasi Pengeluaran ASB' : 'Pengeluaran Berjalan';
+    nextStatusLabel = isCompleted ? 'Menunggu Verifikasi Asisten Bibitan' : 'Pengeluaran Berjalan';
   } else {
     nextStatus = isCompleted ? RECEIPT_KSP_STATUS.MENUNGGU_PENERIMAAN_PENGURUS : 'PENGELUARAN_BERJALAN';
     nextStatusLabel = isCompleted ? (RECEIPT_KSP_STATUS_LABELS[RECEIPT_KSP_STATUS.MENUNGGU_PENERIMAAN_PENGURUS] || 'Menunggu Penerimaan') : 'Pengeluaran Berjalan';

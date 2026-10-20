@@ -691,7 +691,7 @@ export async function submitRequestKebunSendiri(data) {
     transactionType: 'KEBUN_SENDIRI',
     category: data.category,
     status: 'MENUNGGU_VERIFIKASI_ASISTEN_KEPALA',
-    statusLabel: 'Menunggu Verifikasi Askep',
+    statusLabel: 'Menunggu Askep',
 
     // Transaction Date Context
     createdAt: nowISO(),
