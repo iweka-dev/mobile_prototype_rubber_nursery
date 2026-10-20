@@ -36,9 +36,45 @@ jobs:
             --exclude 'tools' \
             --exclude 'docs' \
             --exclude '*.md' \
+            --exclude '.env' \
+            --exclude 'data/notes.json' \
+            --exclude 'data/process-mapping-audit-log.json' \
+            --exclude 'data/backups/' \
             ./ \
             "${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }}:${{ secrets.FOLDER_PATH }}/"
+
+      - name: Initialize runtime files and restart server
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.VPS_PORT }} \
+            ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
+          set -e
+          cd "${{ secrets.FOLDER_PATH }}"
+
+          # Inisialisasi data/notes.json dari template jika belum ada
+          if [ ! -f data/notes.json ]; then
+            cp data/notes.example.json data/notes.json
+            echo "[Deploy] data/notes.json diinisialisasi dari template."
+          else
+            echo "[Deploy] data/notes.json sudah ada, tidak ditimpa."
+          fi
+
+          # Install dependencies baru jika ada
+          npm install --production --silent
+
+          # Restart atau start server dengan PM2
+          if pm2 list | grep -q "sigma-nursery"; then
+            pm2 restart sigma-nursery --update-env
+            echo "[Deploy] Server sigma-nursery direstart."
+          else
+            pm2 start server.js --name "sigma-nursery" --update-env
+            echo "[Deploy] Server sigma-nursery distart."
+          fi
+
+          pm2 save --force
+          echo "[Deploy] Selesai."
+          ENDSSH
 
       - name: Cleanup SSH key
         if: always()
         run: rm -f ~/.ssh/deploy_key
+

@@ -2209,8 +2209,10 @@ export function openAddFeedbackModal(markerCoords = null) {
           closeModal();
           isReviewMode = false;
 
-          if (result.emailStatus?.sent) {
+          if (result.emailSent) {
             toast('Catatan disimpan ke Database & notifikasi email terkirim!', 'success');
+          } else if (result.noteSaved) {
+            toast('Catatan berhasil disimpan. Notifikasi email tidak terkirim — hubungi admin.', 'warning');
           } else {
             toast('Catatan berhasil disimpan ke Database Server!', 'success');
           }
@@ -2335,7 +2337,7 @@ function openChangeStatusModal(note) {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.emailStatus?.sent) {
+          if (data.emailSent) {
             emailNotified = true;
           }
         }

@@ -2,10 +2,14 @@ node_modules/
 .DS_Store
 .env
 
+# Runtime database — database ini berubah saat runtime, JANGAN ditrack Git
+# Deployment tidak boleh menimpa file ini dengan versi kosong dari repo
+data/notes.json
+
 # Runtime audit log and backups (Server mutation data - not source code)
 data/process-mapping-audit-log.json
 data/*.tmp
-data/*.bak
+data/*.bak*
 data/*.backup*
 data/backups/
 portal_patch/backup*

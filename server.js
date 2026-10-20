@@ -135,18 +135,30 @@ app.post('/api/notes', async (req, res) => {
 
     console.log(`[API] Catatan baru #${newNote.number} berhasil disimpan oleh ${newNote.author}`);
 
-    // 2. Kirim notifikasi email secara asinkron
-    let emailResult = null;
+    // 2. Kirim notifikasi email — kegagalan tidak memblokir penyimpanan catatan
+    let emailResult = { sent: false, simulated: false };
     try {
       emailResult = await sendNewNoteNotification(newNote);
+      if (emailResult.simulated) {
+        console.warn('[API] Email tidak dikirim: SMTP belum dikonfigurasi di environment server. Periksa .env di VPS.');
+      } else if (!emailResult.sent) {
+        console.warn('[API] Email gagal dikirim:', emailResult.error || 'Alasan tidak diketahui');
+      }
     } catch (mailErr) {
       console.warn('[API] Peringatan: Gagal mengirim email notifikasi:', mailErr);
-      emailResult = { sent: false, error: mailErr.message };
+      emailResult = { sent: false, simulated: false, error: mailErr.message };
     }
+
+    // Pisahkan status penyimpanan catatan dari status pengiriman email
+    const emailSent = Boolean(emailResult.sent && !emailResult.simulated);
 
     res.status(201).json({
       success: true,
-      message: 'Catatan perbaikan berhasil disimpan!',
+      noteSaved: true,
+      emailSent,
+      message: emailSent
+        ? 'Catatan perbaikan berhasil disimpan & notifikasi email terkirim!'
+        : 'Catatan perbaikan berhasil disimpan. Notifikasi email tidak terkirim — periksa konfigurasi SMTP di server.',
       data: newNote,
       emailStatus: emailResult
     });
@@ -174,20 +186,34 @@ app.patch('/api/notes/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Gagal memperbarui catatan' });
     }
 
+    // Email hanya dikirim saat status berubah
     let emailResult = null;
+    let emailSent = null; // null = tidak dicoba (bukan error)
     if (isStatusChanged) {
       console.log(`[API] Status Catatan #${updated.number} berubah: ${oldStatus} -> ${updated.status}`);
       try {
         emailResult = await sendStatusUpdateNotification(updated, oldStatus, updated.status);
+        if (emailResult.simulated) {
+          console.warn('[API] Email status tidak dikirim: SMTP belum dikonfigurasi di environment server.');
+        } else if (!emailResult.sent) {
+          console.warn('[API] Email status gagal dikirim:', emailResult.error || 'Alasan tidak diketahui');
+        }
       } catch (mailErr) {
         console.warn('[API] Peringatan: Gagal mengirim email pembaruan status:', mailErr);
-        emailResult = { sent: false, error: mailErr.message };
+        emailResult = { sent: false, simulated: false, error: mailErr.message };
       }
+      emailSent = Boolean(emailResult?.sent && !emailResult?.simulated);
     }
 
     res.json({
       success: true,
-      message: 'Catatan berhasil diperbarui',
+      noteSaved: true,
+      emailSent,
+      message: isStatusChanged
+        ? (emailSent
+            ? `Status catatan diperbarui & email notifikasi terkirim!`
+            : `Status catatan diperbarui. Email notifikasi tidak terkirim.`)
+        : 'Catatan berhasil diperbarui',
       data: updated,
       emailStatus: emailResult
     });
@@ -234,19 +260,43 @@ app.post('/api/notes/test-email', async (req, res) => {
 
 /**
  * GET /api/health — Endpoint status server
+ * Mengembalikan status konfigurasi secara aman tanpa mengekspos secret.
  */
 app.get('/api/health', (req, res) => {
-  const isEmailConfigured = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_USER !== 'your-email@gmail.com');
+  const smtpConfigured = Boolean(
+    process.env.SMTP_HOST &&
+    process.env.SMTP_USER &&
+    process.env.SMTP_PASS &&
+    process.env.SMTP_USER !== 'your-email@gmail.com'
+  );
+  const adminEmailRaw = process.env.ADMIN_NOTIFICATION_EMAIL || process.env.SMTP_USER || '';
+  // Masking: hanya tampilkan domain, bukan alamat penuh
+  const adminEmailMasked = adminEmailRaw.includes('@')
+    ? `***@${adminEmailRaw.split('@')[1]}`
+    : '(Belum diset)';
+
+  // Cek database terjangkau
+  let databaseOk = false;
+  try {
+    const notes = getAllNotes();
+    databaseOk = Array.isArray(notes);
+  } catch (_) {
+    databaseOk = false;
+  }
+
   res.json({
     status: 'online',
     appName: 'Sigma Nursery PWA Backend',
     uptime: `${Math.floor(process.uptime())} detik`,
-    emailConfigured: isEmailConfigured,
-    adminEmail: process.env.ADMIN_NOTIFICATION_EMAIL || process.env.SMTP_USER || '(Belum diset)',
-    database: 'SQLite/JSON Persistent Store OK',
+    smtpConfigured,
+    emailConfigured: smtpConfigured,
+    adminEmail: adminEmailMasked,
+    databaseConnected: databaseOk,
+    database: databaseOk ? 'JSON Persistent Store OK' : 'JSON Store ERROR',
     timestamp: new Date().toISOString()
   });
 });
+
 
 /* =============================================================================
  * API ROUTES: PROCESS MAPPING CRUD
