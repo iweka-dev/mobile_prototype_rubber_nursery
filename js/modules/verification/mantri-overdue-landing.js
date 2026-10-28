@@ -47,7 +47,7 @@ export function renderMantriOverdueLanding() {
   const allTxs = getMantriTodayTransactions(currentUser);
 
   // Filter hanya transaksi yang berstatus LEWAT WAKTU dan belum terverifikasi
-  const overdueTxs = allTxs.filter(tx => 
+  const overdueTxs = allTxs.filter(tx =>
     (tx.status === MANTRI_TRANSACTION_STATUS.READY_TO_CONFIRM || tx.status === MANTRI_TRANSACTION_STATUS.REVISION) &&
     tx.isSubmissionExpired
   );
@@ -112,14 +112,14 @@ export function renderMantriOverdueLanding() {
         </button>
 
         ${availableDates.map(dStr => {
-          const isActive = activeDateFilter === dStr;
-          const countOnDate = overdueTxs.filter(t => normalizeDateStr(t.date) === dStr).length;
-          return `
+    const isActive = activeDateFilter === dStr;
+    const countOnDate = overdueTxs.filter(t => normalizeDateStr(t.date) === dStr).length;
+    return `
             <button class="dynamic-tab-btn" data-date="${esc(dStr)}" style="flex-shrink: 0; padding: 10px 6px; font-size: 0.80rem; font-weight: ${isActive ? '800' : '600'}; color: ${isActive ? '#057A55' : '#64748B'}; background: transparent; border: none; border-bottom: 2.5px solid ${isActive ? '#057A55' : 'transparent'}; cursor: pointer; white-space: nowrap; transition: all 0.15s ease;">
               ${esc(dStr)} (${countOnDate})
             </button>
           `;
-        }).join('')}
+  }).join('')}
       </nav>
 
       <!-- 3. MAIN CONTENT AREA (Scrollable) -->
@@ -134,11 +134,11 @@ export function renderMantriOverdueLanding() {
         </div>
 
         ${visibleTxs.length === 0 ? renderEmptyStateCard({
-          title: 'Tidak Ada Data Lewat Waktu',
-          description: activeDateFilter === 'ALL' 
-            ? 'Seluruh transaksi operasional telah dikonfirmasi tepat waktu.' 
-            : `Tidak ada data transaksi lewat waktu pada tanggal ${activeDateFilter}.`
-        }) : `
+    title: 'Tidak Ada Data Lewat Waktu',
+    description: activeDateFilter === 'ALL'
+      ? 'Seluruh transaksi operasional telah dikonfirmasi tepat waktu.'
+      : `Tidak ada data transaksi lewat waktu pada tanggal ${activeDateFilter}.`
+  }) : `
           <!-- Section Title & Count -->
           <div style="display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 0;">
             <h2 style="font-size: 0.88rem; font-weight: 800; color: #0F172A; margin: 0;">
@@ -164,7 +164,7 @@ export function renderMantriOverdueLanding() {
           ${!isSpecificDateSelected ? `
             <!-- Mode Semua Tanggal: Hint Selector -->
             <div style="background: #F1F5F9; border: 1px dashed #CBD5E1; border-radius: 8px; padding: 10px 12px; text-align: center; color: #64748B; font-size: 0.75rem; font-weight: 600;">
-              💡 Pilih salah satu tanggal di atas untuk mengaktifkan pengiriman data lewat waktu.
+              Pilih salah satu tanggal di atas untuk mengaktifkan pengiriman data lewat waktu.
             </div>
             <button type="button" disabled style="width: 100%; height: 42px; background: #E2E8F0; color: #94A3B8; font-size: 0.82rem; font-weight: 700; border: none; border-radius: 8px; cursor: not-allowed; display: flex; align-items: center; justify-content: center; gap: 8px;">
               <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
@@ -287,10 +287,19 @@ function attachOverdueEvents(overdueTxs, user) {
     });
   });
 
-  // Close Detail Modal
-  document.getElementById('btn-close-detail-modal')?.addEventListener('click', () => {
+  // Close Detail Modal. Modal ini memakai renderer yang sama dengan halaman
+  // Central Hub, sehingga ID tombolnya adalah btn-close-modal-x/footer.
+  const closeDetailModal = () => {
     selectedTxForModal = null;
     renderMantriOverdueLanding();
+  };
+
+  document.getElementById('btn-close-modal-x')?.addEventListener('click', closeDetailModal);
+  document.getElementById('btn-close-modal-footer')?.addEventListener('click', closeDetailModal);
+  // Tetap dukung ID lama bila ada kartu historis yang masih menggunakannya.
+  document.getElementById('btn-close-detail-modal')?.addEventListener('click', closeDetailModal);
+  document.getElementById('modal-tx-detail-backdrop')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeDetailModal();
   });
 
   // Lewat Waktu Info Icon Click

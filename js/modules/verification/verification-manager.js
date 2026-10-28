@@ -126,14 +126,14 @@ export const VERIFICATION_10_MODULES = Object.freeze([
   {
     id: 'PEMERIKSAAN',
     label: 'Pemeriksaan',
-    types: ['PEMERIKSAAN', 'PEMERIKSAAN_DEDERAN', 'INSPECTION'],
+    types: ['PEMERIKSAAN', 'PEMERIKSAAN_DEDERAN', 'SELEKSI_PRA_OKULASI', 'INSPECTION'],
     iconName: 'documentSearch',
     order: 5
   },
   {
     id: 'PENYELEKSIAN',
     label: 'Penyeleksian',
-    types: ['PENYELEKSIAN', 'SELEKSI_PRA_OKULASI', 'SELECTION'],
+    types: ['PENYELEKSIAN', 'SELECTION'],
     iconName: 'leafCheck',
     order: 6
   },
@@ -438,15 +438,22 @@ function resolveRecordContext(match, storeKey, referenceType) {
       (match.batchCode && (p.batchCode === match.batchCode || p.batchNo === match.batchCode))
     );
     if (parentDoc) {
+      const isExecution = String(match.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI');
       return {
         ...parentDoc,
         ...match,
         _storeKey: storeKey,
         _parentDoc: parentDoc,
         _parentDocId: parentDoc.id,
-        totalLayak: parentDoc.totalLayak !== undefined && parentDoc.totalLayak !== null ? parentDoc.totalLayak : (match.totalLayak !== undefined ? match.totalLayak : match.actualBibitRetainedQty),
-        totalAfkir: parentDoc.totalAfkir !== undefined && parentDoc.totalAfkir !== null ? parentDoc.totalAfkir : (match.totalAfkir !== undefined ? match.totalAfkir : match.actualBibitSelectedQty),
-        totalDiperiksa: parentDoc.totalDiperiksa !== undefined && parentDoc.totalDiperiksa !== null ? parentDoc.totalDiperiksa : (match.totalDiperiksa !== undefined ? match.totalDiperiksa : match.actualPolybagInspectedQty),
+        totalLayak: isExecution
+          ? (match.actualBibitRetainedQty ?? match.bibitDipertahankan ?? match.sessionBibitRetained ?? match.jumlahLayak ?? 0)
+          : (parentDoc.totalLayak !== undefined && parentDoc.totalLayak !== null ? parentDoc.totalLayak : (match.totalLayak !== undefined ? match.totalLayak : match.actualBibitRetainedQty)),
+        totalAfkir: isExecution
+          ? (match.actualBibitSelectedQty ?? match.bibitReject ?? match.jumlahAfkir ?? 0)
+          : (parentDoc.totalAfkir !== undefined && parentDoc.totalAfkir !== null ? parentDoc.totalAfkir : (match.totalAfkir !== undefined ? match.totalAfkir : match.actualBibitSelectedQty)),
+        totalDiperiksa: isExecution
+          ? (match.actualPolybagInspectedQty ?? match.jumlahDiperiksa ?? match.polybagScope ?? 0)
+          : (parentDoc.totalDiperiksa !== undefined && parentDoc.totalDiperiksa !== null ? parentDoc.totalDiperiksa : (match.totalDiperiksa !== undefined ? match.totalDiperiksa : match.actualPolybagInspectedQty)),
         bedengan: match.bedengan || match.bedenganCode || parentDoc.bedengan,
         batchCode: match.batchCode || parentDoc.batchCode
       };
@@ -762,27 +769,23 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
       const formattedLayak = formatSafeNumber(layak);
       const formattedAfkir = formatSafeNumber(afkir);
       const formattedDiperiksa = formatSafeNumber(diperiksa);
-      const numDiperiksa = diperiksa !== '-' ? Number(diperiksa) : 0;
-      const numLayak = layak !== '-' ? Number(layak) : 0;
-      const pctLayak = (numDiperiksa > 0 && layak !== '-') ? `${Math.round((numLayak / numDiperiksa) * 100)}%` : '-';
       const batch = raw.batchCode || raw.batchNo || '-';
       const bedengan = raw.bedengan || raw.bedenganCode || '-';
-      const summary = `${stage}: ${formattedLayak} Layak, ${formattedAfkir} Afkir (Batch: ${batch})`;
+      const summary = `${stage}: ${formattedDiperiksa} Polybag Diperiksa, ${formattedLayak} Bibit Tersedia, ${formattedAfkir} Diseleksi (Batch: ${batch})`;
 
       return {
-        title: `Seleksi Pra-Okulasi (${stage})`,
+        title: `Pemeriksaan Pra-Okulasi (${stage})`,
         info: `Batch ${batch} · Bedengan ${bedengan}`,
-        mainQty: layak !== '-' ? `${formattedLayak} Layak` : '-',
-        unit: 'Pkk',
+        mainQty: diperiksa !== '-' ? `${formattedDiperiksa} Polybag Diperiksa` : '-',
+        unit: 'Ply',
         summary,
         fields: [
           { label: 'Tahap Seleksi', value: stage },
           { label: 'Batch', value: batch },
           { label: 'Bedengan', value: bedengan },
-          { label: 'Populasi Diperiksa', value: diperiksa !== '-' ? `${formattedDiperiksa} Pkk` : '-' },
-          { label: 'Bibit Layak', value: layak !== '-' ? `${formattedLayak} Pkk` : '-', highlight: true },
-          { label: 'Persentase Layak', value: pctLayak, highlight: true },
-          { label: 'Bibit Afkir', value: afkir !== '-' ? `${formattedAfkir} Pkk` : '-' },
+          { label: 'Polybag Diperiksa', value: diperiksa !== '-' ? `${formattedDiperiksa} Ply` : '-' },
+          { label: 'Bibit Tersedia', value: layak !== '-' ? `${formattedLayak} Pkk` : '-', highlight: true },
+          { label: 'Bibit Diseleksi / Afkir', value: afkir !== '-' ? `${formattedAfkir} Pkk` : '-' },
           { label: 'Keterangan', value: raw.keterangan || raw.notes || raw.catatan || raw.alasan || '-' }
         ]
       };
@@ -794,7 +797,7 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
       let layak = raw.actualBibitRetainedQty !== undefined
         ? raw.actualBibitRetainedQty
         : (raw.bibitDipertahankan !== undefined ? raw.bibitDipertahankan : (raw.jumlahLayak !== undefined ? raw.jumlahLayak : '-'));
-      const afkir = raw.actualBibitSelectedQty !== undefined
+      let afkir = raw.actualBibitSelectedQty !== undefined
         ? raw.actualBibitSelectedQty
         : (raw.bibitReject !== undefined ? raw.bibitReject : (raw.jumlahAfkir !== undefined ? raw.jumlahAfkir : '-'));
 
@@ -804,6 +807,22 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
         docNoStr.includes('/SEL-I') || docNoStr.includes('/SEL-II') || docNoStr.includes('/SEL-III');
 
       if (isPreGrafting) {
+        // Dokumen CULL Pra-Okulasi harus mengikuti transaksi pelaksanaan Mantri
+        // yang dirujuk, bukan mengambil saldo agregat batch/bedengan.
+        const sourceExecution = storage.get('selection_transactions', []).find(tx =>
+          String(tx.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI') &&
+          ((raw.sourceTransactionId && String(tx.id || '') === String(raw.sourceTransactionId)) ||
+           (raw.sourceDocNo && String(tx.docNo || tx.selectionNo || '') === String(raw.sourceDocNo)))
+        );
+        if (sourceExecution) {
+          const sourceLayak = sourceExecution.actualBibitRetainedQty ?? sourceExecution.bibitDipertahankan ?? sourceExecution.sessionBibitRetained ?? sourceExecution.jumlahLayak;
+          const sourceAfkir = sourceExecution.actualBibitSelectedQty ?? sourceExecution.bibitReject ?? sourceExecution.jumlahAfkir;
+          if (sourceLayak !== undefined && sourceLayak !== null && !isNaN(Number(sourceLayak))) layak = Number(sourceLayak);
+          if ((afkir === '-' || afkir === undefined || afkir === null) && sourceAfkir !== undefined && sourceAfkir !== null && !isNaN(Number(sourceAfkir))) {
+            afkir = Number(sourceAfkir);
+          }
+        }
+
         const allPreDocs = storage.get('pre_grafting_selection_documents', []);
         const parentDoc = allPreDocs.find(d =>
           (raw.parentSelectionDocumentId && d.id === raw.parentSelectionDocumentId) ||
@@ -813,7 +832,7 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
           (raw.sourceDocNo && d.docNo === raw.sourceDocNo) ||
           (raw.batchCode && (d.batchCode === raw.batchCode || d.batchNo === raw.batchCode))
         );
-        if (parentDoc) {
+        if (parentDoc && !sourceExecution) {
           if (parentDoc.totalBibitRetainedQty !== undefined && parentDoc.totalBibitRetainedQty !== null && !isNaN(parentDoc.totalBibitRetainedQty)) {
             layak = parentDoc.totalBibitRetainedQty;
           } else if (parentDoc.sourceBibitQty !== undefined && parentDoc.sourceBibitQty !== null && !isNaN(parentDoc.sourceBibitQty)) {
@@ -1336,6 +1355,21 @@ function resolvePraOkulasiParentDocNo(v, userCtx = null) {
   return null;
 }
 
+function isIndividualPraOkulasiExecutionVerification(v) {
+  if (!v || String(v.referenceType || '').toUpperCase() !== 'SELEKSI_PRA_OKULASI') return false;
+  const refId = String(v.referenceId || '');
+  const refDocNo = String(v.referenceDocNo || '');
+  return storage.get('selection_transactions', []).some(tx =>
+    (String(tx.id || '') === refId || String(tx.docNo || tx.selectionNo || '') === refDocNo) &&
+    String(tx.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI')
+  );
+}
+
+function isIndependentSelectionVerification(v) {
+  const type = String(v?.referenceType || v?.moduleType || '').toUpperCase();
+  return type === 'PENYELEKSIAN' || type === 'SELECTION';
+}
+
 /**
  * Mengambil daftar record yang actionable (menunggu verifikasi) dalam scope ASB.
  * 
@@ -1352,7 +1386,9 @@ export function getActionableRecordsForAsb(currentUser, filters = {}) {
   const latestMap = new Map();
   allVerifRecords.forEach(v => {
     const parentDocNo = resolvePraOkulasiParentDocNo(v, currentUser);
-    const key = parentDocNo ? `SELEKSI_PRA_OKULASI:${parentDocNo}` : `${v.referenceType}:${v.referenceId}`;
+    const isIndividualExecution = isIndividualPraOkulasiExecutionVerification(v);
+    const isIndependentSelection = isIndependentSelectionVerification(v);
+    const key = parentDocNo && !isIndividualExecution && !isIndependentSelection ? `SELEKSI_PRA_OKULASI:${parentDocNo}` : `${v.referenceType}:${v.referenceId}`;
     if (!latestMap.has(key)) {
       latestMap.set(key, v);
     } else {
@@ -1379,10 +1415,13 @@ export function getActionableRecordsForAsb(currentUser, filters = {}) {
     let refId = verifRecord.referenceId;
     const docNo = verifRecord.referenceDocNo || refId;
     const parentDocNo = resolvePraOkulasiParentDocNo(verifRecord, currentUser);
+    const isIndependentSelection = isIndependentSelectionVerification(verifRecord);
     const isSelDoc = Boolean(
-      parentDocNo ||
-      String(docNo || '').match(/^2026\/SEL(-[I|V|X]+)?\/\d+$/i) ||
-      verifRecord.referenceType === 'SELEKSI_PRA_OKULASI'
+      !isIndependentSelection && (
+        parentDocNo ||
+        String(docNo || '').match(/^2026\/SEL(-[I|V|X]+)?\/\d+$/i) ||
+        verifRecord.referenceType === 'SELEKSI_PRA_OKULASI'
+      )
     );
     if (isSelDoc) {
       refType = 'SELEKSI_PRA_OKULASI';
@@ -1409,13 +1448,14 @@ export function getActionableRecordsForAsb(currentUser, filters = {}) {
 
     // Filter out pure child execution transactions & child cull records (e.g. PELAKSANAAN_SELEKSI_I, 2026/SEL-I/xxx, 2026/CULL/SEL-xxx)
     // Transaksi eksekusi pelaksanaan / afkir anak bukanlah kartu audit mandiri terpisah, melainkan bagian dari Dokumen Induk
-    if (rawRecord.transactionType && String(rawRecord.transactionType).startsWith('PELAKSANAAN_SELEKSI')) {
+    const isIndividualExecution = isIndividualPraOkulasiExecutionVerification(verifRecord);
+    if (!isIndividualExecution && rawRecord.transactionType && String(rawRecord.transactionType).startsWith('PELAKSANAAN_SELEKSI')) {
       return;
     }
-    if ((rawRecord.parentSelectionDocNo || rawRecord.parentSelectionDocumentId) && docNo !== rawRecord.parentSelectionDocNo) {
+    if (!isIndividualExecution && !isIndependentSelection && (rawRecord.parentSelectionDocNo || rawRecord.parentSelectionDocumentId) && docNo !== rawRecord.parentSelectionDocNo) {
       return;
     }
-    if (String(docNo || '').includes('/CULL/SEL') && (rawRecord.parentSelectionDocNo || rawRecord.sourceDocNo || rawRecord.selectionDocNo)) {
+    if (!isIndependentSelection && String(docNo || '').includes('/CULL/SEL') && (rawRecord.parentSelectionDocNo || rawRecord.sourceDocNo || rawRecord.selectionDocNo)) {
       return;
     }
 
@@ -1532,7 +1572,9 @@ export function getVerificationRecordsByScope(currentUser, filters = {}) {
   const latestMap = new Map();
   allVerifRecords.forEach(v => {
     const parentDocNo = resolvePraOkulasiParentDocNo(v, currentUser);
-    const key = parentDocNo ? `SELEKSI_PRA_OKULASI:${parentDocNo}` : `${v.referenceType}:${v.referenceId}`;
+    const isIndividualExecution = isIndividualPraOkulasiExecutionVerification(v);
+    const isIndependentSelection = isIndependentSelectionVerification(v);
+    const key = parentDocNo && !isIndividualExecution && !isIndependentSelection ? `SELEKSI_PRA_OKULASI:${parentDocNo}` : `${v.referenceType}:${v.referenceId}`;
     if (!latestMap.has(key)) {
       latestMap.set(key, v);
     } else {
@@ -1559,10 +1601,13 @@ export function getVerificationRecordsByScope(currentUser, filters = {}) {
     let refId = verifRecord.referenceId;
     const docNo = verifRecord.referenceDocNo || refId;
     const parentDocNo = resolvePraOkulasiParentDocNo(verifRecord, currentUser);
+    const isIndependentSelection = isIndependentSelectionVerification(verifRecord);
     const isSelDoc = Boolean(
-      parentDocNo ||
-      String(docNo || '').match(/^2026\/SEL(-[I|V|X]+)?\/\d+$/i) ||
-      verifRecord.referenceType === 'SELEKSI_PRA_OKULASI'
+      !isIndependentSelection && (
+        parentDocNo ||
+        String(docNo || '').match(/^2026\/SEL(-[I|V|X]+)?\/\d+$/i) ||
+        verifRecord.referenceType === 'SELEKSI_PRA_OKULASI'
+      )
     );
     if (isSelDoc) {
       refType = 'SELEKSI_PRA_OKULASI';
@@ -1579,13 +1624,14 @@ export function getVerificationRecordsByScope(currentUser, filters = {}) {
 
     // Filter out pure child execution transactions & child cull records (e.g. PELAKSANAAN_SELEKSI_I, 2026/SEL-I/xxx, 2026/CULL/SEL-xxx)
     // Transaksi eksekusi pelaksanaan / afkir anak bukanlah kartu audit mandiri terpisah, melainkan bagian dari Dokumen Induk
-    if (rawRecord.transactionType && String(rawRecord.transactionType).startsWith('PELAKSANAAN_SELEKSI')) {
+    const isIndividualExecution = isIndividualPraOkulasiExecutionVerification(verifRecord);
+    if (!isIndividualExecution && rawRecord.transactionType && String(rawRecord.transactionType).startsWith('PELAKSANAAN_SELEKSI')) {
       return;
     }
-    if ((rawRecord.parentSelectionDocNo || rawRecord.parentSelectionDocumentId) && docNo !== rawRecord.parentSelectionDocNo) {
+    if (!isIndividualExecution && !isIndependentSelection && (rawRecord.parentSelectionDocNo || rawRecord.parentSelectionDocumentId) && docNo !== rawRecord.parentSelectionDocNo) {
       return;
     }
-    if (String(docNo || '').includes('/CULL/SEL') && (rawRecord.parentSelectionDocNo || rawRecord.sourceDocNo || rawRecord.selectionDocNo)) {
+    if (!isIndependentSelection && String(docNo || '').includes('/CULL/SEL') && (rawRecord.parentSelectionDocNo || rawRecord.sourceDocNo || rawRecord.selectionDocNo)) {
       return;
     }
 
@@ -2192,8 +2238,70 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
     if (idx !== -1) {
       const targetRecord = records[idx];
 
+      const isIndividualPraExecution = referenceType === 'SELEKSI_PRA_OKULASI' &&
+        sourceRecord._storeKey === 'selection_transactions' &&
+        String(targetRecord.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI');
+
+      // Setiap pelaksanaan Pra-Okulasi diverifikasi sebagai dokumen mandiri.
+      // Dokumen induk baru final setelah seluruh transaksi anak disetujui.
+      if (isIndividualPraExecution) {
+        targetRecord.status = 'DISETUJUI';
+        targetRecord.isFinal = true;
+        targetRecord.verificationStatus = VERIFICATION_STATUS.TERVERIFIKASI;
+        targetRecord.verifiedByUserId = currentUser.userId || currentUser.id;
+        targetRecord.verifiedByName = currentUser.name || 'Asisten Bibitan';
+        targetRecord.verifiedByRole = currentUser.role || ROLES.ASISTEN_BIBITAN;
+        targetRecord.verifiedAt = nowIso;
+        targetRecord.approvalNotes = notes || 'Disetujui oleh Asisten Bibitan via Central Hub Verifikasi';
+        targetRecord.updatedAt = nowIso;
+        records[idx] = targetRecord;
+        storage.set('selection_transactions', records);
+        persistVerificationRecord();
+
+        const parentId = targetRecord.parentSelectionDocumentId || targetRecord.selectionDocumentId || sourceRecord._parentDocId;
+        const parentNo = targetRecord.parentSelectionDocNo || targetRecord.selectionDocNo;
+        const siblings = records.filter(tx =>
+          String(tx.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI') &&
+          ((parentId && (tx.parentSelectionDocumentId === parentId || tx.selectionDocumentId === parentId)) ||
+           (parentNo && (tx.parentSelectionDocNo === parentNo || tx.selectionDocNo === parentNo)))
+        );
+        const allSiblingsApproved = siblings.length > 0 && siblings.every(tx =>
+          tx.isFinal === true ||
+          ['DISETUJUI', 'TERVERIFIKASI', 'VERIFIED', 'APPROVED'].includes(String(tx.status || tx.verificationStatus || '').toUpperCase())
+        );
+
+        if (allSiblingsApproved && (parentId || parentNo)) {
+          const allPreDocs = storage.get('pre_grafting_selection_documents', []);
+          const pIdx = allPreDocs.findIndex(d => (parentId && d.id === parentId) || (parentNo && d.docNo === parentNo));
+          if (pIdx !== -1) {
+            const parentDoc = allPreDocs[pIdx];
+            parentDoc.status = 'DISETUJUI';
+            parentDoc.isFinal = true;
+            parentDoc.verificationStatus = VERIFICATION_STATUS.TERVERIFIKASI;
+            parentDoc.verifiedByUserId = currentUser.userId || currentUser.id;
+            parentDoc.verifiedByName = currentUser.name || 'Asisten Bibitan';
+            parentDoc.verifiedByRole = currentUser.role || ROLES.ASISTEN_BIBITAN;
+            parentDoc.verifiedAt = nowIso;
+            parentDoc.approvalNotes = notes || 'Seluruh transaksi Pemeriksaan Pra-Okulasi disetujui';
+            parentDoc.updatedAt = nowIso;
+            storage.set('pre_grafting_selection_documents', allPreDocs);
+
+            const stageNorm = String(parentDoc.selectionStage || '').toUpperCase();
+            try {
+              if (stageNorm === 'SELEKSI_I' || stageNorm === 'SELEKSI_1') {
+                const gate = canCreateSelection2Document(parentDoc);
+                if (gate.canCreate) createSelection2DocumentFromSelection1(parentDoc, currentUser);
+              } else if (stageNorm === 'SELEKSI_II' || stageNorm === 'SELEKSI_2') {
+                const gate = canCreateSelection3Document(parentDoc);
+                if (gate.canCreate) createSelection3DocumentFromSelection2(parentDoc, currentUser);
+              }
+            } catch (genErr) {
+              console.warn('[approveVerification] Downstream generation notice:', genErr.message);
+            }
+          }
+        }
       // A. PENYELEKSIAN / CULL (selection_transactions)
-      if (referenceType === 'PENYELEKSIAN' || referenceType === 'SELECTION' || sourceRecord._storeKey === 'selection_transactions') {
+      } else if (referenceType === 'PENYELEKSIAN' || referenceType === 'SELECTION' || sourceRecord._storeKey === 'selection_transactions') {
         const isExemptPrePlanting = isPrePlantingCullStockExempt(targetRecord);
         const mutationQty = parseInt(targetRecord.jumlahAfkir || targetRecord.quantity || 0, 10);
 
@@ -2742,9 +2850,11 @@ export function returnVerification({ referenceType, referenceId, returnReason, n
       if (referenceType === 'SELEKSI_PRA_OKULASI' || sourceRecord._storeKey === 'pre_grafting_selection_documents') {
         records[idx].isCompleted = false;
         const returnedDoc = records[idx];
+        const isIndividualExecution = sourceRecord._storeKey === 'selection_transactions' &&
+          String(returnedDoc.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI');
         const allSelTxs = storage.get('selection_transactions', []);
         let childTxsModified = false;
-        allSelTxs.forEach(tx => {
+        if (!isIndividualExecution) allSelTxs.forEach(tx => {
           if (
             tx.selectionDocumentId === returnedDoc.id ||
             tx.parentSelectionDocumentId === returnedDoc.id ||
@@ -2797,7 +2907,8 @@ export function returnVerification({ referenceType, referenceId, returnReason, n
       }
 
       storage.set(sourceRecord._storeKey, records);
-      if (sourceRecord._storeKey === 'selection_transactions') {
+      if (sourceRecord._storeKey === 'selection_transactions' &&
+          !String(records[idx]?.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI')) {
         returnPhysicalStockCullVerification(records[idx], currentUser, returnReason.trim());
       }
     }

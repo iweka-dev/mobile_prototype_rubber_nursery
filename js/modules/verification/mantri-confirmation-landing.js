@@ -624,7 +624,18 @@ export function getUniversalCardConfig(tx) {
       const mainQty = disp.mainQty || `${formatSafeNumber(raw.totalLayak || raw.finalBibitQty || 0)} Layak`;
       const batch = raw.batchCode || '-';
       const bedengan = raw.bedengan || '-';
-      const afkir = formatSafeNumber(raw.totalAfkir || raw.rejectedBibitQty || 0);
+      // Kartu transaksi pelaksanaan menyimpan jumlah afkir pada field kanonis
+      // actualBibitSelectedQty, bukan pada totalAfkir milik dokumen induk.
+      const afkirRaw = raw.actualBibitSelectedQty !== undefined && raw.actualBibitSelectedQty !== null
+        ? raw.actualBibitSelectedQty
+        : (raw.bibitReject !== undefined && raw.bibitReject !== null
+          ? raw.bibitReject
+          : (raw.jumlahAfkir !== undefined && raw.jumlahAfkir !== null
+            ? raw.jumlahAfkir
+            : (raw.totalAfkir !== undefined && raw.totalAfkir !== null
+              ? raw.totalAfkir
+              : (raw.rejectedBibitQty || 0))));
+      const afkir = formatSafeNumber(afkirRaw);
 
       return {
         moduleLabel: 'PEMERIKSAAN PRA-OKULASI',

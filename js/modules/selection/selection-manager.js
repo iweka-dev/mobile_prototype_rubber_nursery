@@ -459,6 +459,18 @@ export function getSelectionStageLabel(item) {
     return 'Seleksi Pra-Semai (Dederan)';
   }
 
+  // Tahap eksplisit Seleksi I-III harus mengalahkan modul referensi asal
+  // (misalnya sourceModule PENYEMAIAN pada transaksi Seleksi I).
+  if (stage === SELECTION_STAGES.SELEKSI_1 || stage === 'SELEKSI_1' || stage === 'SELEKSI_I') {
+    return 'Seleksi I (Pra-Okulasi)';
+  }
+  if (stage === SELECTION_STAGES.SELEKSI_2 || stage === 'SELEKSI_2' || stage === 'SELEKSI_II') {
+    return 'Seleksi II (Pra-Okulasi)';
+  }
+  if (stage === SELECTION_STAGES.SELEKSI_3 || stage === 'SELEKSI_3' || stage === 'SELEKSI_III') {
+    return 'Seleksi III (Pra-Okulasi)';
+  }
+
   // 2. Pindah Semai
   if (
     stage === SELECTION_STAGES.PINDAH_SEMAI ||
@@ -469,17 +481,6 @@ export function getSelectionStageLabel(item) {
     srcTxType === 'SEEDING'
   ) {
     return 'Seleksi Pindah Semai';
-  }
-
-  // 3. Pra-Okulasi I-III Document / Execution Stage
-  if (stage === SELECTION_STAGES.SELEKSI_1 || stage === 'SELEKSI_1' || stage === 'SELEKSI_I') {
-    return 'Seleksi I (Pra-Okulasi)';
-  }
-  if (stage === SELECTION_STAGES.SELEKSI_2 || stage === 'SELEKSI_2' || stage === 'SELEKSI_II') {
-    return 'Seleksi II (Pra-Okulasi)';
-  }
-  if (stage === SELECTION_STAGES.SELEKSI_3 || stage === 'SELEKSI_3' || stage === 'SELEKSI_III') {
-    return 'Seleksi III (Pra-Okulasi)';
   }
 
   // 4. Pasca-Okulasi
@@ -583,6 +584,17 @@ export function reconcileSelectionPoolWithTransactions() {
     (tx.transactionType && String(tx.transactionType).startsWith('PELAKSANAAN_SELEKSI')) ||
     ['SELEKSI_I', 'SELEKSI_1', 'SELEKSI_II', 'SELEKSI_2', 'SELEKSI_III', 'SELEKSI_3'].includes(String(tx.selectionStage || tx.stage || '').toUpperCase())
   ));
+
+  // Versi lama Review Workspace pernah menyalin selection_transactions ke
+  // selection_pool. Singkirkan salinan sesi pelaksanaan berdasarkan ID sumber;
+  // kandidat SEL-POOL-PRE-* dibentuk kembali di bawah, sedangkan CULL tetap utuh.
+  const executionIds = new Set(allTxs.filter(tx => isExecutionRecord(tx) && isPreGraftingExecution(tx)).map(tx => tx.id).filter(Boolean));
+  pool = pool.filter(item => {
+    if (!item || !executionIds.has(item.id)) return true;
+    if (isCullDocNo(item.docNo) || isCullDocNo(item.selectionDocNo) || isCullDocNo(item.selectionPoolDocNo)) return true;
+    poolChanged = true;
+    return false;
+  });
   const isPreGraftingCullDeclaration = (tx) => Boolean(tx &&
     isCullDocNo(tx.docNo || tx.selectionNo || tx.selectionPoolDocNo) && (
       tx.sourceModule === 'SELEKSI_PRA_OKULASI' ||
@@ -6220,6 +6232,10 @@ export function syncPreGraftingExecutionToSelectionPool(execTx, parentDoc = null
     alasanDitolakCategory: isAlreadyDeclared ? (existing.alasanDitolakCategory || existing.category || 'AFKIR') : (execTx.alasanDitolakCategory || execTx.category || 'PENDING_DECLARATION'),
     jumlahAfkir: isAlreadyDeclared ? (existing.jumlahAfkir || afkirQty) : afkirQty,
     quantity: isAlreadyDeclared ? (existing.quantity || afkirQty) : afkirQty,
+    actualPolybagInspectedQty: execTx.actualPolybagInspectedQty ?? execTx.polybagScope ?? null,
+    actualBibitSelectedQty: afkirQty,
+    actualBibitRetainedQty: execTx.actualBibitRetainedQty ?? execTx.bibitDipertahankan ?? execTx.sessionBibitRetained ?? execTx.jumlahLayak ?? null,
+    jumlahLayak: execTx.actualBibitRetainedQty ?? execTx.bibitDipertahankan ?? execTx.sessionBibitRetained ?? execTx.jumlahLayak ?? null,
     alasan: isAlreadyDeclared ? (existing.alasan || `Bibit afkir ${stageLabel} (${execTx.bedenganCode || '-'})`) : (execTx.alasan || (execTx.rejectSourceReference && execTx.rejectSourceReference.reason) || `Bibit afkir ${stageLabel} (${execTx.bedenganCode || '-'})`),
     alasanDetail: isAlreadyDeclared ? (existing.alasanDetail || existing.alasan || null) : (execTx.alasanDetail || null),
     

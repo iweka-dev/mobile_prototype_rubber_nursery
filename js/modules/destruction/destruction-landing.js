@@ -101,6 +101,11 @@ function renderBapbReviewDashboard(app, currentUser) {
   const isAsb = role === ROLES.ASISTEN_BIBITAN;
   const isAskep = role === ROLES.ASISTEN_KEPALA || role === 'ASKEP';
   const isPengurus = role === ROLES.PENGURUS;
+  // Gunakan resolver yang sama dengan modal sumber agar angka ringkasan selalu
+  // identik dengan jumlah dokumen yang benar-benar dapat dipilih.
+  const eligibleSelectionCount = isAsb
+    ? getEligibleSelectionDocsForBapb(currentUser).length
+    : 0;
 
   // Filter kelompok dokumen BAPB
   const bapbRecords = scopedRecords.filter(r => r.documentType === 'BAPB_KARET' || r.bapbStatus || r.signatures);
@@ -123,6 +128,23 @@ function renderBapbReviewDashboard(app, currentUser) {
 
       <!-- MAIN CONTENT LIST -->
       <main style="flex: 1; overflow-y: auto; padding: 16px;">
+        ${isAsb && eligibleSelectionCount > 0 ? `
+          <section id="bapb-eligible-summary" aria-live="polite" style="display: flex; align-items: flex-start; gap: 10px; background: #ECFDF5; border: 1px solid #A7F3D0; border-radius: 10px; padding: 11px 12px; margin-bottom: 14px;">
+            <div style="width: 32px; height: 32px; border-radius: 999px; background: #D1FAE5; color: #057A55; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="9" y1="13" x2="15" y2="13"></line>
+                <line x1="9" y1="17" x2="15" y2="17"></line>
+              </svg>
+            </div>
+            <div style="min-width: 0; color: #065F46; font-size: 0.78rem; line-height: 1.45;">
+              <div style="font-weight: 800; margin-bottom: 2px;">Dokumen Afkir Siap Diproses</div>
+              <div>Ada <strong>${eligibleSelectionCount} dokumen</strong> yang perlu dibuatkan Berita Acara Pemusnahan Bibit.</div>
+            </div>
+          </section>
+        ` : ''}
+
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
           <h2 style="font-size: 0.88rem; font-weight: 700; color: #1E293B; margin: 0;">Riwayat Pemusnahan Bibit</h2>
           <span style="background: #E2E8F0; color: #475569; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;">${bapbRecords.length} Dokumen</span>
@@ -143,8 +165,11 @@ function renderBapbReviewDashboard(app, currentUser) {
       <!-- BOTTOM ACTION BAR (ASB ONLY) -->
       ${isAsb ? `
         <footer style="flex-shrink: 0; padding: 12px 16px 16px; background: #FFFFFF; border-top: 1px solid #E2E8F0; box-shadow: 0 -2px 6px rgba(0,0,0,0.04); z-index: 10;">
-          <button id="btn-create-bapb" type="button" style="width: 100%; height: 44px; background: #116834; color: #FFFFFF; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(17,104,52,0.25);">
+          <button id="btn-create-bapb" type="button" style="width: 100%; height: 44px; background: #116834; color: #FFFFFF; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 2px 4px rgba(17,104,52,0.25);">
             <span>Buat Berita Acara</span>
+            ${eligibleSelectionCount > 0 ? `
+              <span class="bapb-action-notif-dot notif-dot" title="${eligibleSelectionCount} dokumen afkir perlu diproses" aria-label="${eligibleSelectionCount} dokumen afkir perlu diproses" style="display: inline-block; width: 10px; height: 10px; flex: 0 0 10px; background: #EF4444; border-radius: 999px; box-shadow: 0 0 0 2px #FFFFFF;"></span>
+            ` : ''}
           </button>
         </footer>
       ` : ''}

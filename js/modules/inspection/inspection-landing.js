@@ -6,7 +6,7 @@ import { session } from '../../core/session.js';
 import { openDrawer } from '../../components/drawer.js';
 import { getCurrentUserContext, resolveUserContext, ROLES } from '../../core/user-context.js';
 import { hasActionableSelection } from '../selection/selection-manager.js';
-import { getActionableDestructionCount } from '../destruction/destruction-manager.js';
+import { getActionableDestructionCount, getEligibleSelectionDocsForBapb } from '../destruction/destruction-manager.js';
 import { renderAsbBottomNav, attachAsbBottomNavEvents } from '../../components/bottom-nav-asb.js';
 import { renderPemeriksaanSummaryCardHtml } from '../verification/asb-summary-cards.js';
 import { CONFIG } from '../../core/config.js';
@@ -303,13 +303,14 @@ function renderInspectionLandingAsistenBibitan() {
 
   const allDestructions = storage.get('destruction_transactions', []);
   const hasActionableDestruction = getActionableDestructionCount(allDestructions, userCtx) > 0;
+  const eligibleBapbSourceCount = getEligibleSelectionDocsForBapb(userCtx).length;
 
   const physicalStockActionable = getPhysicalStockActionableCount(userCtx);
   const menuCards = ASISTEN_BIBITAN_PEMERIKSAAN_MENUS.filter(item => !item.feature || CONFIG.FEATURES?.[item.feature]).map((item) => {
     let badgeHtml = '';
-    if (item.id === 'pemusnahan-bibit' && hasActionableDestruction) {
+    if (item.id === 'pemusnahan-bibit' && (hasActionableDestruction || eligibleBapbSourceCount > 0)) {
       badgeHtml = `
-        <div class="beranda-menu-badge-dot notif-dot" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
+        <div class="beranda-menu-badge-dot notif-dot bapb-menu-notif-dot" title="${eligibleBapbSourceCount > 0 ? `${eligibleBapbSourceCount} dokumen afkir perlu dibuatkan berita acara` : 'Ada pemusnahan bibit yang perlu diproses'}" aria-label="Notifikasi Pemusnahan Bibit" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
       `;
     } else if (item.id === 'pemeriksaan-stok-fisik' && physicalStockActionable > 0) {
       badgeHtml = `<div class="beranda-menu-badge-dot notif-dot" style="position:absolute;top:12px;right:12px;width:11px;height:11px;background-color:#D32F2F;border-radius:50%;box-shadow:0 0 0 2px #FFFFFF;z-index:5"></div>`;
@@ -2146,7 +2147,7 @@ export function attachPreGraftingInspectionEvents(app, user, userCtx, preGraftin
         const pStatus = String(parentDoc.status || '').toUpperCase();
         const pVerif = String(parentDoc.verificationStatus || '').toUpperCase();
         if (pStatus === SELECTION_STATUS.DISETUJUI || pStatus === 'DISETUJUI' || parentDoc.isFinal || pVerif === 'TERVERIFIKASI') {
-          toast('Dokumen induk telah disetujui final oleh Asisten Bibitan. Transaksi pelaksanaan tidak dapat dihapus.', 'warning');
+          toast('Dokumen referensi telah disetujui final oleh Asisten Bibitan. Transaksi pelaksanaan tidak dapat dihapus.', 'warning');
           return;
         }
       }

@@ -962,7 +962,7 @@ function renderAsistenSelectionReview(app, currentUser) {
         body: `
           <div style="font-size: 0.84rem; color: #334155; line-height: 1.5;">
             <p style="margin: 0 0 12px 0;">
-              Kembalikan hanya sesi <strong>${esc(targetExecution.docNo || targetExecution.id)}</strong> pada bedengan <strong>${esc(targetExecution.bedenganCode || targetExecution.bedengan || '-')}</strong>. Sesi lain dalam dokumen induk tetap tersimpan.
+              Kembalikan hanya sesi <strong>${esc(targetExecution.docNo || targetExecution.id)}</strong> pada bedengan <strong>${esc(targetExecution.bedenganCode || targetExecution.bedengan || '-')}</strong>. Sesi lain dalam dokumen referensi tetap tersimpan.
             </p>
             <div style="margin-bottom: 14px;">
               <label style="display: block; font-size: 0.78rem; font-weight: 700; color: #0F172A; margin-bottom: 4px;">Alasan Pengembalian (Wajib) <span style="color: #DC2626;">*</span></label>
@@ -1699,11 +1699,11 @@ export function renderProgramBatchCompactView({
                   <!-- VERTICAL DIVIDER -->
                   <div style="width: 1px; height: 26px; background: #E2E8F0; align-self: center;"></div>
 
-                  <!-- KOLOM 3: LOKASI BEDENGAN -->
+                  <!-- KOLOM 3: JUMLAH BEDENGAN -->
                   <div>
-                    <div style="font-size: 0.68rem; font-weight: 500; color: #64748B; margin-bottom: 2px;">Lokasi Bedengan</div>
+                    <div style="font-size: 0.68rem; font-weight: 500; color: #64748B; margin-bottom: 2px;">Jumlah Bedengan</div>
                     <div class="bedengan-count-label" style="font-size: 0.84rem; font-weight: 800; color: #0F172A; letter-spacing: -0.01em;">
-                      ${metrics.bedenganCount} Bedengan
+                      ${metrics.bedenganCount}
                     </div>
                   </div>
                 </div>
@@ -2751,7 +2751,7 @@ export function renderGlobalChildTransactionsSection(txs = [], docs = [], stage 
                         <strong style="color: #0F172A; font-size: 0.70rem;">${esc(parentDoc.programCode || parentDoc.programName || tx.programCode || '-')}</strong>
                       </div>
                       <div style="display: flex; align-items: center; gap: 4px;">
-                        <span style="color: #64748B; font-size: 0.66rem;">Dokumen Induk:</span>
+                        <span style="color: #64748B; font-size: 0.66rem;">Dokumen Referensi:</span>
                         <strong style="color: #0F172A; font-family: monospace; font-size: 0.70rem;">${esc(parentDoc.docNo || tx.parentSelectionDocNo || tx.selectionDocNo || '-')}</strong>
                       </div>
                     </div>
@@ -2792,6 +2792,16 @@ export function deduplicateLogicalSelectionPool(poolList = []) {
     let key;
     if (existingTx && (existingTx.id || existingTx.docNo)) {
       key = `TX:${existingTx.docNo || existingTx.id}`;
+    } else if (
+      item.sourceTransactionId &&
+      (item.originType === 'REJECT_PRE_GRAFTING' ||
+        item.sourceModule === 'SELEKSI_PRA_OKULASI' ||
+        String(item.sourceTransactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI'))
+    ) {
+      // Untuk afkir Pra-Okulasi, ID transaksi pelaksanaan adalah identitas
+      // kejadian yang stabil. sourceDocNo bisa berupa SOW pada data lama atau
+      // nomor SEL-I/II/III pada data baru; jangan jadikan keduanya dua kartu.
+      key = `PRE_EXEC:${item.sourceTransactionId}`;
     } else {
       const mod = String(item.originType || item.sourceModule || 'GENERIC').toUpperCase().trim();
       const dedDoc = String(item.dederanDocNo || '').trim();
@@ -3187,18 +3197,21 @@ export function renderCulledHistoryList(culledTxs = [], emptyTitle, emptyDesc, t
  * MANTRI BIBITAN: OPERASIONAL SELEKSI PRA-OKULASI & PASCA-OKULASI
  * =============================================================================
  */
-function renderMantriSelectionLanding(app, user) {
+function renderMantriSelectionLanding(app, user, { syncOnEntry = true } = {}) {
   const today = getEffectiveTodayDDMMYYYY();
 
-  // Pastikan sinkronisasi dederan, seeding rejections, dan dokumen seleksi pra-okulasi selalu dilakukan saat render mantri view
-  try {
-    reconcileSelectionPoolWithTransactions();
-    syncInspectionRejectionsToSelectionPool();
-    syncAllDederanRejectionsToSelectionPool();
-    syncAllSeedingsToSelectionPool(user);
-    syncAllSeedingsToPreGraftingSelectionDocuments(user);
-  } catch (err) {
-    console.warn('[renderMantriSelectionLanding] Gagal sync:', err);
+  // Sinkronisasi hanya saat halaman dimasuki. Pergantian tab/filter harus
+  // menjadi render baca-saja agar tidak mengubah antrean afkir secara sporadis.
+  if (syncOnEntry) {
+    try {
+      reconcileSelectionPoolWithTransactions();
+      syncInspectionRejectionsToSelectionPool();
+      syncAllDederanRejectionsToSelectionPool();
+      syncAllSeedingsToSelectionPool(user);
+      syncAllSeedingsToPreGraftingSelectionDocuments(user);
+    } catch (err) {
+      console.warn('[renderMantriSelectionLanding] Gagal sync:', err);
+    }
   }
 
   function standardizeSelectionDocNo(rawDocNo, index = 1, subCode = 'PS') {
@@ -3215,10 +3228,12 @@ function renderMantriSelectionLanding(app, user) {
 
   // Pre-Grafting Selection Documents (Seleksi I, Seleksi II, Seleksi III)
   // Reconcile approved documents to downstream stages
-  try {
-    syncAllApprovedPreGraftingSelectionDocuments(user);
-  } catch (syncErr) {
-    console.warn('[renderMantriSelectionLanding] Fallback sync note:', syncErr.message);
+  if (syncOnEntry) {
+    try {
+      syncAllApprovedPreGraftingSelectionDocuments(user);
+    } catch (syncErr) {
+      console.warn('[renderMantriSelectionLanding] Fallback sync note:', syncErr.message);
+    }
   }
 
   // Canonical Active Collection: exclude legacy aggregate split documents
@@ -3232,7 +3247,7 @@ function renderMantriSelectionLanding(app, user) {
   let rawSelectionPool = storage.get('selection_pool', []);
   let poolDirty = false;
   const currentSelTxs = storage.get('selection_transactions', []);
-  rawSelectionPool = rawSelectionPool.map(p => {
+  if (syncOnEntry) rawSelectionPool = rawSelectionPool.map(p => {
     if (!p) return p;
     const hasExecutionDoc = (p.docNo && !isCullDocNo(p.docNo) && (String(p.docNo).includes('/SEL/') || String(p.docNo).includes('/SEL-I/') || String(p.docNo).includes('/SEL-II/') || String(p.docNo).includes('/SEL-III/'))) ||
       (p.selectionDocNo && !isCullDocNo(p.selectionDocNo) && (String(p.selectionDocNo).includes('/SEL/') || String(p.selectionDocNo).includes('/SEL-I/') || String(p.selectionDocNo).includes('/SEL-II/') || String(p.selectionDocNo).includes('/SEL-III/')));
@@ -3270,7 +3285,7 @@ function renderMantriSelectionLanding(app, user) {
     }
     return p;
   });
-  if (poolDirty) {
+  if (syncOnEntry && poolDirty) {
     storage.set('selection_pool', rawSelectionPool);
   }
 
@@ -3301,23 +3316,41 @@ function renderMantriSelectionLanding(app, user) {
     (item.originType === 'REJECT_DEDERAN' || (!item.originType && item.sourceModule === 'DEDERAN')) &&
     (parseInt(item.jumlahAfkir || item.quantity || 0, 10) > 0)
   );
+  const isPreGraftingExecutionRecord = tx => Boolean(tx &&
+    !isCullDocNo(tx.docNo || tx.selectionNo || tx.selectionPoolDocNo) && (
+      String(tx.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI') ||
+      tx.selectionType === SELECTION_TYPES.PRA_OKULASI ||
+      ['SELEKSI_1', 'SELEKSI_I', 'SELEKSI_2', 'SELEKSI_II', 'SELEKSI_3', 'SELEKSI_III']
+        .includes(String(tx.selectionStage || tx.stage || '').trim().toUpperCase()) ||
+      Boolean(tx.parentSelectionDocumentId || tx.selectionDocumentId || tx.parentSelectionDocNo) ||
+      Boolean(tx.selectionDocNo && String(tx.selectionDocNo).includes('/SEL/')) ||
+      Boolean(tx.docNo && /\/SEL(?:-I|-II|-III)?\//.test(String(tx.docNo)))
+    )
+  );
   const pindahSemaiSelectionPool = scopedPool.filter(item =>
     (item.originType === 'REJECT_PENYEMAIAN' || (!item.originType && item.sourceModule === 'PENYEMAIAN')) &&
-    (parseInt(item.jumlahAfkir || item.quantity || 0, 10) > 0)
+    !isPreGraftingExecutionRecord(item) &&
+    parseInt(item.jumlahAfkir || item.quantity || 0, 10) > 0
   );
   const preGraftingSelectionPool = scopedPool.filter(item => {
-    const isPreGrafting = (
+    const itemSourceDocNo = String(item.sourceDocNo || item.selectionSourceDocNo || '').trim();
+    const itemSourceTransactionId = String(item.sourceTransactionId || '').trim();
+    const linkedExecution = currentSelTxs.find(tx => isPreGraftingExecutionRecord(tx) && (
+      (itemSourceTransactionId && String(tx.id || '') === itemSourceTransactionId) ||
+      (itemSourceTransactionId && String(tx.docNo || tx.selectionNo || '') === itemSourceTransactionId) ||
+      (itemSourceDocNo && String(tx.docNo || tx.selectionNo || '') === itemSourceDocNo)
+    ));
+    const isPreGrafting = Boolean(linkedExecution) && (
       item.originType === 'REJECT_PRE_GRAFTING' ||
       item.sourceModule === 'SELEKSI_PRA_OKULASI' ||
       item.selectionType === SELECTION_TYPES.PRA_OKULASI ||
       item.selectionType === 'PRA_OKULASI' ||
-      item.selectionStage === 'SELEKSI_1' || item.selectionStage === 'SELEKSI_I' ||
-      item.selectionStage === 'SELEKSI_2' || item.selectionStage === 'SELEKSI_II' ||
-      item.selectionStage === 'SELEKSI_3' || item.selectionStage === 'SELEKSI_III' ||
-      Boolean(item.parentSelectionDocumentId) ||
-      Boolean(item.parentSelectionDocNo)
+      String(item.sourceTransactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI') ||
+      ['SELEKSI_1', 'SELEKSI_I', 'SELEKSI_2', 'SELEKSI_II', 'SELEKSI_3', 'SELEKSI_III']
+        .includes(String(item.selectionStage || item.stage || '').trim().toUpperCase()) ||
+      Boolean(linkedExecution)
     );
-    return isPreGrafting && (parseInt(item.jumlahAfkir || item.quantity || 0, 10) > 0);
+    return isPreGrafting && parseInt(item.jumlahAfkir || item.quantity || 0, 10) > 0;
   });
 
   const postGraftingSelectionPool = scopedPool.filter(item => {
@@ -3568,26 +3601,27 @@ function renderMantriSelectionLanding(app, user) {
 
   // Back button
   app.querySelector('#btn-back')?.addEventListener('click', () => navigate('/home'));
+  const rerenderWithoutSync = () => renderMantriSelectionLanding(app, user, { syncOnEntry: false });
 
   // Main Tab switching
   app.querySelector('#tab-mantri-pre-sowing')?.addEventListener('click', () => {
     activeMantriTab = 'PRE_SOWING';
-    renderMantriSelectionLanding(app, user);
+    rerenderWithoutSync();
   });
 
   app.querySelector('#tab-mantri-pindah-semai-reject')?.addEventListener('click', () => {
     activeMantriTab = 'PINDAH_SEMAI_REJECT';
-    renderMantriSelectionLanding(app, user);
+    rerenderWithoutSync();
   });
 
   app.querySelector('#tab-mantri-pre-grafting')?.addEventListener('click', () => {
     activeMantriTab = 'PRE_GRAFTING';
-    renderMantriSelectionLanding(app, user);
+    rerenderWithoutSync();
   });
 
   app.querySelector('#tab-mantri-post-grafting')?.addEventListener('click', () => {
     activeMantriTab = 'POST_GRAFTING';
-    renderMantriSelectionLanding(app, user);
+    rerenderWithoutSync();
   });
 
   // Batch row click for Pasca-Okulasi
@@ -3600,7 +3634,7 @@ function renderMantriSelectionLanding(app, user) {
         batchCode,
         user,
         onSaved: () => {
-          renderMantriSelectionLanding(app, user);
+          rerenderWithoutSync();
         }
       });
     });
@@ -3651,7 +3685,7 @@ function renderMantriSelectionLanding(app, user) {
                 } else {
                   toast(`Data seleksi (${res.transaction.docNo}) sudah tercatat sebelumnya. Dokumentasi diperbarui.`, 'info');
                 }
-                renderMantriSelectionLanding(app, user);
+                rerenderWithoutSync();
               } catch (err) {
                 console.error('[Declare Selection Error]', err);
                 toast(err.message || 'Gagal menyimpan deklarasi seleksi', 'error');
@@ -3710,7 +3744,7 @@ function renderMantriSelectionLanding(app, user) {
               try {
                 const res = declareSelectionItem(targetCullItem, photoResult, user, { category, notes });
                 toast(`Dokumen ${res.transaction.docNo} berhasil diperbaiki dan siap dikonfirmasi kembali di Central Hub.`, 'success');
-                renderMantriSelectionLanding(app, user);
+                rerenderWithoutSync();
               } catch (err) {
                 console.error('[Repair Selection Error]', err);
                 toast(err.message || 'Gagal menyimpan perbaikan seleksi', 'error');
@@ -3728,11 +3762,11 @@ function renderMantriSelectionLanding(app, user) {
     currentDateStr: selectedSelectionDate,
     onDateSelect: (newDateStr) => {
       setSelectedSelectionDate(newDateStr);
-      renderMantriSelectionLanding(app, user);
+      rerenderWithoutSync();
     },
     onDateReset: () => {
       setSelectedSelectionDate(todayDDMMYYYY());
-      renderMantriSelectionLanding(app, user);
+      rerenderWithoutSync();
     }
   });
 }

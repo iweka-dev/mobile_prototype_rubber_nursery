@@ -1090,6 +1090,72 @@ export function getMantriTodayTransactions(userContext = null, targetDate = null
       }
     }
 
+    // Satu dokumen induk dapat memiliki beberapa transaksi pelaksanaan fisik.
+    // Jika lebih dari satu, Central Hub harus mempertahankan identitas setiap
+    // nomor transaksi agar jumlah kartu sama dengan Ringkasan Transaksi.
+    const hasMultipleExecutionTransactions = childTxs.length > 1 && childTxs.every(child =>
+      String(child.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI')
+    );
+    if (hasMultipleExecutionTransactions) {
+      childTxs.forEach(child => {
+        const childId = child.id || child.docNo || child.selectionNo;
+        if (!childId) return;
+        const childDate = extractBusinessDate(child) || bDate;
+        const childStat = resolveTransactionStatus(child, MODULE_TYPES.SELEKSI_PRA_OKULASI, verifMap);
+        const childOutstanding = childStat.status === MANTRI_TRANSACTION_STATUS.READY_TO_CONFIRM || childStat.status === MANTRI_TRANSACTION_STATUS.REVISION;
+        if (childDate !== todayStr && !childOutstanding) return;
+
+        const childDocNo = child.docNo || child.selectionNo || String(childId);
+        const childActor = child.createdByName || child.mantri || item.submittedByName || item.createdByName || user?.name || 'Mantri Bibitan';
+        const childStage = getSelectionStageLabel(child);
+        const childLayak = child.actualBibitRetainedQty !== undefined
+          ? child.actualBibitRetainedQty
+          : (child.bibitDipertahankan !== undefined ? child.bibitDipertahankan : (child.sessionBibitRetained !== undefined ? child.sessionBibitRetained : (child.jumlahLayak || 0)));
+        const childAfkir = child.actualBibitSelectedQty !== undefined
+          ? child.actualBibitSelectedQty
+          : (child.bibitReject !== undefined ? child.bibitReject : (child.jumlahAfkir || 0));
+        const childDiperiksa = child.actualPolybagInspectedQty !== undefined
+          ? child.actualPolybagInspectedQty
+          : (child.jumlahDiperiksa !== undefined ? child.jumlahDiperiksa : (child.polybagScope || 0));
+        const childBatch = child.batchCode || item.batchCode || '-';
+        const childBedengan = child.bedenganCode || child.bedengan || item.bedengan || '-';
+        const childRaw = {
+          ...child,
+          parentSelectionDocumentId: child.parentSelectionDocumentId || item.id,
+          parentSelectionDocNo: child.parentSelectionDocNo || item.docNo
+        };
+
+        normalizedList.push({
+          id: String(childId),
+          docNo: childDocNo,
+          moduleType: MODULE_TYPES.SELEKSI_PRA_OKULASI,
+          moduleLabel: MODULE_LABELS[MODULE_TYPES.SELEKSI_PRA_OKULASI],
+          date: childDate,
+          actor: childActor,
+          summary: `${childStage}: ${formatSafeNumber(childLayak)} Layak, ${formatSafeNumber(childAfkir)} Afkir (Batch: ${childBatch})`,
+          status: childStat.status,
+          verificationStatus: childStat.verificationStatus,
+          rawRecord: childRaw,
+          storageKey: 'selection_transactions',
+          display: {
+            title: `Pemeriksaan Pra-Okulasi (${childStage})`,
+            info: `Batch ${childBatch} · Bedengan ${childBedengan}`,
+            mainQty: `${formatSafeNumber(childLayak)} Layak`,
+            unit: 'Pkk',
+            fields: [
+              { label: 'Tahap Seleksi', value: childStage },
+              { label: 'Batch', value: childBatch },
+              { label: 'Bedengan', value: childBedengan },
+              { label: 'Populasi Diperiksa', value: `${formatSafeNumber(childDiperiksa)} Ply` },
+              { label: 'Bibit Layak', value: `${formatSafeNumber(childLayak)} Pkk`, highlight: true },
+              { label: 'Bibit Afkir', value: `${formatSafeNumber(childAfkir)} Pkk` }
+            ]
+          }
+        });
+      });
+      return;
+    }
+
     const docNo = item.docNo || item.selectionDocNo || item.id || `PRE-${id}`;
     const actor = item.submittedByName || item.createdByName || item.mantri || user?.name || 'Mantri Bibitan';
     const stage = getSelectionStageLabel(item);
@@ -1658,7 +1724,7 @@ export function submitMantriTransactions(transactionIds = [], userContext = null
 
   targetItems.forEach(tx => {
     // 1. Update status pada data raw source
-    if (tx.moduleType === MODULE_TYPES.SELEKSI_PRA_OKULASI) {
+    if (tx.moduleType === MODULE_TYPES.SELEKSI_PRA_OKULASI && tx.storageKey === 'pre_grafting_selection_documents') {
       const preDocs = storage.get('pre_grafting_selection_documents', []);
       const pIdx = preDocs.findIndex(d => d.id === tx.id || d.docNo === tx.docNo);
       if (pIdx !== -1) {

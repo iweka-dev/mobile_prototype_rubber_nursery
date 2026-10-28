@@ -540,7 +540,7 @@ export const TX_MODULES = {
     subtitle: 'Afkir & Pengurangan Fisik Stok',
     icon: 'selection',
     route: '/selection',
-    storageKey: 'selection_pool',
+    storageKey: 'selection_transactions',
     repo: selectionRepository,
     qtyField: 'jumlahAfkir',
     unit: 'Pkk'
@@ -771,11 +771,7 @@ export function loadTxList(modId) {
     return [];
   }
   if (modId === 'selection') {
-    const pool = storage.get('selection_pool', []);
-    const txs = storage.get('selection_transactions', []);
-    if (txs && txs.length > 0) return txs;
-    if (pool && pool.length > 0) return pool;
-    return [];
+    return storage.get('selection_transactions', []);
   }
   if (modId === 'budding') {
     const items = storage.get('budding_transactions', []);
@@ -1118,10 +1114,6 @@ function saveTxList(modId, list) {
   const cfg = TX_MODULES[modId];
   if (!cfg) return;
   storage.set(cfg.storageKey, list);
-  if (modId === 'selection') {
-    storage.set('selection_pool', list);
-    storage.set('selection_transactions', list);
-  }
   if (modId === 'regrafting') {
     const allBudding = storage.get('budding_transactions', []);
     const otherBudding = allBudding.filter((t) => t.type !== 'REGRAFTING');
@@ -1358,7 +1350,7 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
     // 7. Penyeleksian
     if (!targetModId || targetModId === 'selection') {
       const dbList = await selectionRepository.list();
-      const stored = storage.get('selection_transactions', storage.get('selection_pool', []));
+      const stored = storage.get('selection_transactions', []);
       const map = new Map();
       stored.forEach((it) => map.set(it.id || it.docNo, it));
       (dbList || []).forEach((it) => {
@@ -1366,7 +1358,8 @@ export async function syncAllTxFromMobileDB(targetModId = null) {
       });
       const merged = Array.from(map.values());
       storage.set('selection_transactions', merged);
-      storage.set('selection_pool', merged);
+      // Kandidat deklarasi adalah koleksi tersendiri. Menyalin transaksi ke
+      // selection_pool menghapus kandidat SEL-POOL-PRE-* saat sync selesai.
       if (targetModId === 'selection') syncedCount = merged.length;
     }
 
