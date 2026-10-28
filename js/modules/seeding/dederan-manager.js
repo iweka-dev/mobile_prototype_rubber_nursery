@@ -567,7 +567,12 @@ export function createDederanInspection(payload) {
 
   // Consolidate rejection / inspection result to selection_pool as PENDING_DECLARATION only if reject > 0
   if (newSummary.totalTidakBerhasil > 0) {
-    integrateDederanRejectionToSelectionPool(finalizedInspection, newSummary.totalTidakBerhasil);
+    integrateDederanRejectionToSelectionPool({
+      ...finalizedInspection,
+      jumlahBerhasil: newSummary.totalBerhasil,
+      jumlahLayak: newSummary.totalBerhasil,
+      jumlahDiperiksa: newSummary.totalDiperiksa
+    }, newSummary.totalTidakBerhasil);
   }
 
   return {
@@ -774,8 +779,9 @@ export function integrateDederanRejectionToSelectionPool(inspectionTx, totalTida
     alasanDitolakCategory: existingItem?.alasanDitolakCategory || null,
     jumlahDeder: inspectionTx.jumlahDeder || existingItem?.jumlahDeder || null,
     jumlahDiperiksa: inspectionTx.jumlahDiperiksa || inspectionTx.jumlahDeder || existingItem?.jumlahDiperiksa || null,
-    jumlahBerhasil: inspectionTx.jumlahBerhasil || existingItem?.jumlahBerhasil || 0,
-    jumlahLayak: inspectionTx.jumlahBerhasil || existingItem?.jumlahLayak || 0,
+    jumlahBerhasil: inspectionTx.jumlahBerhasil !== undefined ? inspectionTx.jumlahBerhasil : (existingItem?.jumlahBerhasil || 0),
+    jumlahLayak: inspectionTx.jumlahLayak !== undefined ? inspectionTx.jumlahLayak : (inspectionTx.jumlahBerhasil !== undefined ? inspectionTx.jumlahBerhasil : (existingItem?.jumlahLayak || existingItem?.jumlahBerhasil || 0)),
+    actualBibitRetainedQty: inspectionTx.jumlahLayak !== undefined ? inspectionTx.jumlahLayak : (inspectionTx.jumlahBerhasil !== undefined ? inspectionTx.jumlahBerhasil : (existingItem?.actualBibitRetainedQty || existingItem?.jumlahLayak || existingItem?.jumlahBerhasil || 0)),
     jumlahAfkir: qty,
     quantity: qty,
     alasan: `Hasil Pemeriksaan Dederan Tidak Berhasil (${inspectionTx.bedenganCode || (existingItem?.bedenganCode || '-')})`,
@@ -839,6 +845,8 @@ export function integrateDederanRejectionToSelectionPool(inspectionTx, totalTida
           bibitReject: qty,
           jumlahDiperiksa: inspectionTx.jumlahDiperiksa !== undefined ? inspectionTx.jumlahDiperiksa : (tx.jumlahDiperiksa || qty),
           jumlahBerhasil: inspectionTx.jumlahBerhasil !== undefined ? inspectionTx.jumlahBerhasil : (tx.jumlahBerhasil || 0),
+          jumlahLayak: inspectionTx.jumlahLayak !== undefined ? inspectionTx.jumlahLayak : (inspectionTx.jumlahBerhasil !== undefined ? inspectionTx.jumlahBerhasil : (tx.jumlahLayak || tx.jumlahBerhasil || 0)),
+          actualBibitRetainedQty: inspectionTx.jumlahLayak !== undefined ? inspectionTx.jumlahLayak : (inspectionTx.jumlahBerhasil !== undefined ? inspectionTx.jumlahBerhasil : (tx.actualBibitRetainedQty || tx.jumlahLayak || tx.jumlahBerhasil || 0)),
           polybagCount: Math.ceil(qty / 2),
           updatedAt: new Date().toISOString()
         };
@@ -937,10 +945,20 @@ export function syncAllDederanRejectionsToSelectionPool() {
   dederTxs.forEach(dtx => {
     const summary = getBedenganInspectionSummary(dtx);
     if (summary.totalTidakBerhasil > 0) {
-      integrateDederanRejectionToSelectionPool(dtx, summary.totalTidakBerhasil);
+      integrateDederanRejectionToSelectionPool({
+        ...dtx,
+        jumlahBerhasil: summary.totalBerhasil,
+        jumlahLayak: summary.totalBerhasil,
+        jumlahDiperiksa: summary.totalDiperiksa
+      }, summary.totalTidakBerhasil);
     } else {
       // Ensure zero-reject bedengan does not leave stale pending selection pool
-      integrateDederanRejectionToSelectionPool(dtx, 0);
+      integrateDederanRejectionToSelectionPool({
+        ...dtx,
+        jumlahBerhasil: summary.totalBerhasil,
+        jumlahLayak: summary.totalBerhasil,
+        jumlahDiperiksa: summary.totalDiperiksa
+      }, 0);
     }
   });
 }
@@ -982,7 +1000,12 @@ export function deleteDederanInspection(idOrDocNo) {
     const poolId = `SEL-POOL-DED-${deleted.dederanTxDocNo || deleted.docNo || deleted.id}`;
     
     if (newSummary.totalTidakBerhasil > 0) {
-      integrateDederanRejectionToSelectionPool(deleted, newSummary.totalTidakBerhasil);
+      integrateDederanRejectionToSelectionPool({
+        ...deleted,
+        jumlahBerhasil: newSummary.totalBerhasil,
+        jumlahLayak: newSummary.totalBerhasil,
+        jumlahDiperiksa: newSummary.totalDiperiksa
+      }, newSummary.totalTidakBerhasil);
     } else {
       selectionPool = selectionPool.filter(s => {
         const isMatch = s.id === poolId || s.dederanDocNo === (deleted.dederanTxDocNo || deleted.docNo);
@@ -1066,7 +1089,12 @@ export function updateDederanInspection(idOrDocNo, payload) {
 
   // Update selection pool
   if (newSummary.totalTidakBerhasil > 0) {
-    integrateDederanRejectionToSelectionPool(updatedInspection, newSummary.totalTidakBerhasil);
+    integrateDederanRejectionToSelectionPool({
+      ...updatedInspection,
+      jumlahBerhasil: newSummary.totalBerhasil,
+      jumlahLayak: newSummary.totalBerhasil,
+      jumlahDiperiksa: newSummary.totalDiperiksa
+    }, newSummary.totalTidakBerhasil);
   } else {
     let selectionPool = storage.get('selection_pool', []);
     const poolId = `SEL-POOL-DED-${updatedInspection.dederanTxDocNo || updatedInspection.docNo || updatedInspection.id}`;

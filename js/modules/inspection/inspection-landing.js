@@ -9,6 +9,8 @@ import { hasActionableSelection } from '../selection/selection-manager.js';
 import { getActionableDestructionCount } from '../destruction/destruction-manager.js';
 import { renderAsbBottomNav, attachAsbBottomNavEvents } from '../../components/bottom-nav-asb.js';
 import { renderPemeriksaanSummaryCardHtml } from '../verification/asb-summary-cards.js';
+import { CONFIG } from '../../core/config.js';
+import { getPhysicalStockActionableCount } from '../physical-stock-inspection/physical-stock-inspection-manager.js';
 import {
   syncDederanIndukDocuments,
   getDederanIndukDocuments,
@@ -276,11 +278,12 @@ const ASB_INSP_ICONS = {
 
 export const ASISTEN_BIBITAN_PEMERIKSAAN_MENUS = Object.freeze([
   {
-    id: 'pemeriksaan-seleksi',
-    title: 'Pemeriksaan<br>Hasil Seleksi',
-    label: 'Pemeriksaan Hasil Seleksi',
-    route: '/selection',
-    icon: ASB_INSP_ICONS.sprout
+    id: 'pemeriksaan-stok-fisik',
+    title: 'Pemeriksaan<br>Stok Fisik',
+    label: 'Pemeriksaan Stok Fisik',
+    route: '/inspection/physical-stock',
+    icon: ASB_INSP_ICONS.document,
+    feature: 'PHYSICAL_STOCK_INSPECTION'
   },
   {
     id: 'pemusnahan-bibit',
@@ -298,20 +301,18 @@ function renderInspectionLandingAsistenBibitan() {
   const user = session.get();
   const userCtx = getCurrentUserContext() || resolveUserContext(user);
 
-  const hasActionableSelectionBadge = hasActionableSelection(userCtx);
   const allDestructions = storage.get('destruction_transactions', []);
   const hasActionableDestruction = getActionableDestructionCount(allDestructions, userCtx) > 0;
 
-  const menuCards = ASISTEN_BIBITAN_PEMERIKSAAN_MENUS.map((item) => {
+  const physicalStockActionable = getPhysicalStockActionableCount(userCtx);
+  const menuCards = ASISTEN_BIBITAN_PEMERIKSAAN_MENUS.filter(item => !item.feature || CONFIG.FEATURES?.[item.feature]).map((item) => {
     let badgeHtml = '';
-    if (item.id === 'pemeriksaan-seleksi' && hasActionableSelectionBadge) {
+    if (item.id === 'pemusnahan-bibit' && hasActionableDestruction) {
       badgeHtml = `
         <div class="beranda-menu-badge-dot notif-dot" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
       `;
-    } else if (item.id === 'pemusnahan-bibit' && hasActionableDestruction) {
-      badgeHtml = `
-        <div class="beranda-menu-badge-dot notif-dot" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
-      `;
+    } else if (item.id === 'pemeriksaan-stok-fisik' && physicalStockActionable > 0) {
+      badgeHtml = `<div class="beranda-menu-badge-dot notif-dot" style="position:absolute;top:12px;right:12px;width:11px;height:11px;background-color:#D32F2F;border-radius:50%;box-shadow:0 0 0 2px #FFFFFF;z-index:5"></div>`;
     }
 
     return `

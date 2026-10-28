@@ -463,7 +463,8 @@ textarea.field-control {
 /* =============================================================================
    BAPB KARET DIGITAL - HARMONIZED FORM & REVIEW LAYOUT SYSTEM
    ============================================================================= */
-.modal-bapb-fullscreen .modal-body {
+.modal-bapb-fullscreen .modal-body,
+.modal-bapsb-fullscreen .modal-body {
   padding: 12px 14px 20px 14px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;

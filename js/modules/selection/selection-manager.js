@@ -439,6 +439,14 @@ export function getSelectionStageLabel(item) {
   const srcMod = String(item.sourceModule || '').toUpperCase();
   const srcTxType = String(item.sourceTransactionType || '').toUpperCase();
 
+  if (
+    origType === 'PHYSICAL_STOCK_SHORTAGE' ||
+    srcMod === 'PHYSICAL_STOCK_INSPECTION' ||
+    srcTxType === 'PHYSICAL_STOCK_INSPECTION'
+  ) {
+    return 'Afkir Pemeriksaan Stok Fisik';
+  }
+
   // 1. Pra-Semai (Dederan)
   if (
     stage === SELECTION_STAGES.PRA_SEMAI ||
@@ -2354,6 +2362,16 @@ export function declareSelectionItem(targetPoolItem, photoResult, user, customOp
       finalTx.quantity = declaredQty;
       finalTx.jumlahDiperiksa = declaredQty;
     }
+    const retainedQty = targetPoolItem.actualBibitRetainedQty !== undefined
+      ? targetPoolItem.actualBibitRetainedQty
+      : (targetPoolItem.jumlahLayak !== undefined
+        ? targetPoolItem.jumlahLayak
+        : (targetPoolItem.jumlahBerhasil !== undefined ? targetPoolItem.jumlahBerhasil : null));
+    if (retainedQty !== null && !isNaN(parseInt(retainedQty, 10))) {
+      finalTx.jumlahLayak = parseInt(retainedQty, 10);
+      finalTx.actualBibitRetainedQty = parseInt(retainedQty, 10);
+      finalTx.bibitDipertahankan = parseInt(retainedQty, 10);
+    }
     if (targetPoolItem.bedenganId) finalTx.bedenganId = targetPoolItem.bedenganId;
     if (targetPoolItem.bedenganCode) finalTx.bedenganCode = targetPoolItem.bedenganCode;
     if (targetPoolItem.batchId) finalTx.batchId = targetPoolItem.batchId;
@@ -2419,6 +2437,12 @@ export function declareSelectionItem(targetPoolItem, photoResult, user, customOp
       }
     }
 
+    const retainedQty = targetPoolItem.actualBibitRetainedQty !== undefined
+      ? targetPoolItem.actualBibitRetainedQty
+      : (targetPoolItem.jumlahLayak !== undefined
+        ? targetPoolItem.jumlahLayak
+        : (targetPoolItem.jumlahBerhasil !== undefined ? targetPoolItem.jumlahBerhasil : 0));
+
     finalTx = {
       id: newTxId,
       selectionId: newTxId,
@@ -2455,7 +2479,9 @@ export function declareSelectionItem(targetPoolItem, photoResult, user, customOp
       clone: targetPoolItem.clone || targetPoolItem.klon || 'GT 1',
       tahapan: targetPoolItem.tahapan || 'Rubber Main Nursery',
       jumlahDiperiksa: targetPoolItem.jumlahDiperiksa || targetPoolItem.jumlahAfkir || targetPoolItem.quantity || 0,
-      jumlahLayak: targetPoolItem.jumlahLayak || 0,
+      jumlahLayak: retainedQty,
+      actualBibitRetainedQty: retainedQty,
+      bibitDipertahankan: retainedQty,
       jumlahAfkir: targetPoolItem.jumlahAfkir || targetPoolItem.quantity || 0,
       quantity: targetPoolItem.jumlahAfkir || targetPoolItem.quantity || 0,
       
@@ -3662,14 +3688,23 @@ export function canCreateSelection2Document(sourceSelection1IdOrDoc) {
   }
 
   // 1. Validasi Populasi Awal Polybag & Bibit (harus valid dan > 0)
-  let initialPolybag = parseInt(sourceDoc.sourcePolybagQty !== undefined ? sourceDoc.sourcePolybagQty : (sourceDoc.initialPolybagQty || 0), 10);
-  if ((isNaN(initialPolybag) || initialPolybag <= 0) && Array.isArray(sourceDoc.rows) && sourceDoc.rows.length > 0) {
-    initialPolybag = sourceDoc.rows.reduce((sum, r) => sum + parseInt(r.polybag !== undefined ? r.polybag : (r.initialPolybag || r.polybagCount || 0), 10), 0);
-  }
-
   let initialBibit = parseInt(sourceDoc.sourceBibitQty !== undefined ? sourceDoc.sourceBibitQty : (sourceDoc.initialBibitQty || 0), 10);
   if ((isNaN(initialBibit) || initialBibit <= 0) && Array.isArray(sourceDoc.rows) && sourceDoc.rows.length > 0) {
     initialBibit = sourceDoc.rows.reduce((sum, r) => sum + parseInt(r.sourceBibitQty !== undefined ? r.sourceBibitQty : (r.disemai !== undefined ? r.disemai : (r.initialBibit || 0)), 10), 0);
+  }
+
+  let initialPolybag = parseInt(
+    sourceDoc.sourcePolybagQty !== undefined ? sourceDoc.sourcePolybagQty : 
+    (sourceDoc.activePolybagQty !== undefined ? sourceDoc.activePolybagQty : 
+    (sourceDoc.initialPolybagQty !== undefined ? sourceDoc.initialPolybagQty : 
+    (sourceDoc.totalPolybag !== undefined ? sourceDoc.totalPolybag : 
+    (sourceDoc.polybag !== undefined ? sourceDoc.polybag : 0)))), 10
+  );
+  if ((isNaN(initialPolybag) || initialPolybag <= 0) && Array.isArray(sourceDoc.rows) && sourceDoc.rows.length > 0) {
+    initialPolybag = sourceDoc.rows.reduce((sum, r) => sum + parseInt(r.polybag !== undefined ? r.polybag : (r.initialPolybag || r.polybagCount || 0), 10), 0);
+  }
+  if ((isNaN(initialPolybag) || initialPolybag <= 0) && initialBibit > 0) {
+    initialPolybag = Math.ceil(initialBibit / 2);
   }
 
   if (isNaN(initialPolybag) || initialPolybag <= 0 || isNaN(initialBibit) || initialBibit <= 0) {
@@ -4117,14 +4152,23 @@ export function canCreateSelection3Document(sourceSelection2IdOrDoc) {
   }
 
   // 1. Validasi Populasi Awal Polybag & Bibit (harus valid dan > 0)
-  let initialPolybag = parseInt(sourceDoc.sourcePolybagQty !== undefined ? sourceDoc.sourcePolybagQty : (sourceDoc.initialPolybagQty || 0), 10);
-  if ((isNaN(initialPolybag) || initialPolybag <= 0) && Array.isArray(sourceDoc.rows) && sourceDoc.rows.length > 0) {
-    initialPolybag = sourceDoc.rows.reduce((sum, r) => sum + parseInt(r.polybag !== undefined ? r.polybag : (r.initialPolybag || r.polybagCount || 0), 10), 0);
-  }
-
   let initialBibit = parseInt(sourceDoc.sourceBibitQty !== undefined ? sourceDoc.sourceBibitQty : (sourceDoc.initialBibitQty || 0), 10);
   if ((isNaN(initialBibit) || initialBibit <= 0) && Array.isArray(sourceDoc.rows) && sourceDoc.rows.length > 0) {
     initialBibit = sourceDoc.rows.reduce((sum, r) => sum + parseInt(r.sourceBibitQty !== undefined ? r.sourceBibitQty : (r.disemai !== undefined ? r.disemai : (r.initialBibit || 0)), 10), 0);
+  }
+
+  let initialPolybag = parseInt(
+    sourceDoc.sourcePolybagQty !== undefined ? sourceDoc.sourcePolybagQty : 
+    (sourceDoc.activePolybagQty !== undefined ? sourceDoc.activePolybagQty : 
+    (sourceDoc.initialPolybagQty !== undefined ? sourceDoc.initialPolybagQty : 
+    (sourceDoc.totalPolybag !== undefined ? sourceDoc.totalPolybag : 
+    (sourceDoc.polybag !== undefined ? sourceDoc.polybag : 0)))), 10
+  );
+  if ((isNaN(initialPolybag) || initialPolybag <= 0) && Array.isArray(sourceDoc.rows) && sourceDoc.rows.length > 0) {
+    initialPolybag = sourceDoc.rows.reduce((sum, r) => sum + parseInt(r.polybag !== undefined ? r.polybag : (r.initialPolybag || r.polybagCount || 0), 10), 0);
+  }
+  if ((isNaN(initialPolybag) || initialPolybag <= 0) && initialBibit > 0) {
+    initialPolybag = Math.ceil(initialBibit / 2);
   }
 
   if (isNaN(initialPolybag) || initialPolybag <= 0 || isNaN(initialBibit) || initialBibit <= 0) {
@@ -5000,7 +5044,9 @@ export function approvePreGraftingSelectionDocument(idOrDocNo, notes = '', curre
       tx.selectionDocumentId === target.id ||
       tx.parentSelectionDocumentId === target.id ||
       tx.selectionDocNo === target.docNo ||
-      tx.parentSelectionDocNo === target.docNo
+      tx.parentSelectionDocNo === target.docNo ||
+      tx.sourceDocNo === target.docNo ||
+      tx.sourceTransactionId === target.id
     ) {
       tx.status = SELECTION_STATUS.DISETUJUI;
       tx.isFinal = true;
@@ -5022,7 +5068,15 @@ export function approvePreGraftingSelectionDocument(idOrDocNo, notes = '', curre
   const allVerifs = storage.get('verification_transactions', []);
   const matchingIndices = [];
   allVerifs.forEach((v, idx) => {
-    const isDocMatch = (String(v.referenceId) === String(target.id) || String(v.referenceDocNo) === String(target.docNo));
+    const isDocMatch = (
+      String(v.referenceId) === String(target.id) ||
+      String(v.referenceDocNo) === String(target.docNo) ||
+      (v.parentSelectionDocNo && v.parentSelectionDocNo === target.docNo) ||
+      allTxs.some(tx => (
+        (tx.parentSelectionDocNo === target.docNo || tx.sourceDocNo === target.docNo || tx.selectionDocNo === target.docNo) &&
+        (String(v.referenceId) === String(tx.id) || String(v.referenceDocNo) === String(tx.docNo))
+      ))
+    );
     const isTypeMatch = (
       v.referenceType === 'SELEKSI_PRA_OKULASI' ||
       v.referenceType === 'SELECTION' ||

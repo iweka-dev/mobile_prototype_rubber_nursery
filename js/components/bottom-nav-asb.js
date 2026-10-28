@@ -12,8 +12,6 @@ import { storage } from '../core/storage.js';
 import { session } from '../core/session.js';
 import { getCurrentUserContext, resolveUserContext } from '../core/user-context.js';
 import { getVerifikasiSummary, getPemeriksaanSummary } from '../modules/verification/asb-summary-cards.js';
-import { checkAsbSelectionGate } from '../modules/verification/verification-manager.js';
-import { showAsbVerificationGateModal } from '../modules/verification/verification-landing.js';
 import { hasActionablePermintaan, hasActionablePenerimaan } from '../modules/dashboard/beranda.js';
 import { getActionableDispatchCount } from '../modules/dispatch/dispatch-landing.js';
 
@@ -134,13 +132,13 @@ export function renderAsbBottomNav(activeId = 'beranda', userCtx = null) {
   return `
     <footer class="asb-bottom-nav" style="display: flex; align-items: center; justify-content: space-around; height: 58px; background: #FFFFFF; border-top: 1px solid #E5E7EB; flex-shrink: 0; padding: 0 4px; box-shadow: 0 -2px 6px rgba(0,0,0,0.03); z-index: 50; position: relative;">
       ${ASB_NAV_ITEMS.map((item) => {
-        const isActive = item.id === activeId;
-        const color = isActive ? '#116834' : '#9CA3AF';
-        const fontWeight = isActive ? '800' : '600';
-        const bgPill = isActive ? '#E8F5E9' : 'transparent';
-        const hasDot = Boolean(notifState[item.id]);
+    const isActive = item.id === activeId;
+    const color = isActive ? '#116834' : '#9CA3AF';
+    const fontWeight = isActive ? '800' : '600';
+    const bgPill = isActive ? '#E8F5E9' : 'transparent';
+    const hasDot = Boolean(notifState[item.id]);
 
-        return `
+    return `
           <button class="asb-bottom-nav-btn ${isActive ? 'is-active' : ''}" data-nav-id="${item.id}" data-nav-route="${item.route}" type="button" style="display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; border: none; padding: 4px 12px; border-radius: 8px; cursor: pointer; color: ${color}; gap: 2px; flex: 1; height: 100%; transition: all 0.15s ease;">
             <div style="display: flex; align-items: center; justify-content: center; width: 34px; height: 26px; border-radius: 12px; background: ${bgPill}; position: relative;">
               ${item.icon}
@@ -149,7 +147,7 @@ export function renderAsbBottomNav(activeId = 'beranda', userCtx = null) {
             <span style="font-size: 0.68rem; font-weight: ${fontWeight}; letter-spacing: -0.01em; color: ${color};">${item.label}</span>
           </button>
         `;
-      }).join('')}
+  }).join('')}
     </footer>
   `;
 }
@@ -163,19 +161,6 @@ export function attachAsbBottomNavEvents(container) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const route = btn.getAttribute('data-nav-route');
-      if (route === '/verification') {
-        // [CATATAN SIMULASI PROTOTYPE]: Dinonaktifkan sementara agar navigasi ke Verifikasi
-        // tidak terhalang oleh modal Pemeriksaan Seleksi Diperlukan.
-        /*
-        const currentUser = session.getUser ? session.getUser() : (session.get ? session.get() : null);
-        const ctx = getCurrentUserContext() || resolveUserContext(currentUser);
-        const gate = checkAsbSelectionGate(ctx);
-        if (gate.isGated) {
-          showAsbVerificationGateModal(gate.pendingSelectionCount);
-          return;
-        }
-        */
-      }
       if (route) {
         navigate(route);
       }

@@ -27,7 +27,6 @@ import {
   VERIFICATION_10_MODULES,
   VERIFICATION_STATUS,
   REFERENCE_TYPE_LABELS,
-  checkAsbSelectionGate,
   getActionableRecordsForAsb,
   getVerificationRecordsByScope,
   getVerifiedTransactionsByScope,
@@ -153,121 +152,6 @@ const MODULE_ICONS = {
   `
 };
 
-/**
- * Menampilkan modal dialog bahwa ASB wajib menyelesaikan
- * Pemeriksaan Hasil Seleksi terlebih dahulu sebelum dapat melanjutkan verifikasi.
- */
-export function showAsbVerificationGateModal(pendingCount = 1) {
-  openModal({
-    title: 'Pemeriksaan Seleksi Diperlukan',
-    body: `
-      <div style="text-align: center; padding: 10px 4px 4px;">
-        <div style="width: 56px; height: 56px; background: #FEF3C7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; color: #D97706; box-shadow: 0 4px 12px rgba(217, 119, 6, 0.12);">
-          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-            <line x1="12" y1="9" x2="12" y2="13"></line>
-            <line x1="12" y1="17" x2="12.01" y2="17"></line>
-          </svg>
-        </div>
-        <div style="font-size: 0.98rem; font-weight: 800; color: #1E293B; margin-bottom: 8px;">
-          Selesaikan Pemeriksaan Terlebih Dahulu
-        </div>
-        <p style="font-size: 0.84rem; color: #64748B; line-height: 1.5; margin: 0 0 16px 0;">
-          Terdapat <strong style="color: #D97706;">${pendingCount} dokumen</strong> Pemeriksaan Hasil Seleksi yang belum diselesaikan. Harap selesaikan seluruh pemeriksaan hasil seleksi terlebih dahulu baru dapat lanjut verifikasi.
-        </p>
-        <div style="display: flex; gap: 8px; width: 100%;">
-          <button id="gate-modal-home-btn" type="button" style="flex: 1; height: 40px; background: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 8px; font-weight: 600; font-size: 0.82rem; color: #475569; cursor: pointer;">
-            Kembali ke Beranda
-          </button>
-          <button id="gate-modal-selection-btn" type="button" style="flex: 1.2; height: 40px; background: #116834; color: #FFFFFF; border: none; border-radius: 8px; font-weight: 700; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
-            <span>Buka Pemeriksaan</span>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6"></polyline>
-            </svg>
-          </button>
-        </div>
-      </div>
-    `,
-    onClose: () => {
-      if (window.location.hash.includes('/verification')) {
-        navigate('/home');
-      }
-    }
-  });
-
-  const selBtn = document.getElementById('gate-modal-selection-btn');
-  const homeBtn = document.getElementById('gate-modal-home-btn');
-  if (selBtn) {
-    selBtn.addEventListener('click', () => {
-      closeModal();
-      navigate('/selection');
-    });
-  }
-  if (homeBtn) {
-    homeBtn.addEventListener('click', () => {
-      closeModal();
-      navigate('/home');
-    });
-  }
-}
-
-/**
- * Tampilan placeholder saat verifikasi terkunci karena ASB belum menyelesaikan pemeriksaan seleksi
- */
-function renderGatedVerificationPlaceholder(app, userCtx, pendingCount) {
-  app.innerHTML = `
-    <div class="page verif-page" style="display: flex; flex-direction: column; height: 100%; min-height: 0; background: #F8FAFC; position: relative; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-      
-      <!-- HEADER -->
-      <header style="display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 16px; background: #FFFFFF; border-bottom: 1px solid #E2E8F0; flex-shrink: 0;">
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <button id="verif-drawer-btn" type="button" aria-label="Menu" style="background: transparent; border: none; padding: 4px; cursor: pointer; display: flex; align-items: center; color: #116834;">
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="#116834" stroke-width="2.2" fill="none" stroke-linecap="round">
-              <line x1="3" y1="6" x2="21" y2="6"></line>
-              <line x1="3" y1="12" x2="21" y2="12"></line>
-              <line x1="3" y1="18" x2="21" y2="18"></line>
-            </svg>
-          </button>
-          <h1 style="font-size: 1.05rem; font-weight: 800; color: #111827; margin: 0; letter-spacing: -0.01em;">Verifikasi</h1>
-        </div>
-      </header>
-
-      <!-- CONTENT: LOCKED PLACEHOLDER -->
-      <main style="flex: 1; overflow-y: auto; padding: 32px 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;">
-        <div style="width: 68px; height: 68px; background: #FEF3C7; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; color: #D97706; box-shadow: 0 4px 16px rgba(217, 119, 6, 0.18);">
-          <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-          </svg>
-        </div>
-        <h2 style="font-size: 1.1rem; font-weight: 800; color: #1E293B; margin: 0 0 8px 0;">Halaman Verifikasi Terkunci</h2>
-        <p style="font-size: 0.86rem; color: #64748B; max-width: 320px; line-height: 1.55; margin: 0 0 22px 0;">
-          Terdapat <strong style="color: #D97706;">${pendingCount} dokumen</strong> Pemeriksaan Hasil Seleksi yang masih menunggu konfirmasi Anda. Selesaikan seluruh pemeriksaan seleksi untuk membuka halaman verifikasi.
-        </p>
-        <div style="display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 280px;">
-          <button id="gated-go-selection-btn" type="button" style="background: #116834; color: #FFFFFF; font-weight: 700; font-size: 0.88rem; padding: 12px 20px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 2px 6px rgba(17, 104, 52, 0.25);">
-            <span>Selesaikan Pemeriksaan</span>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6"></polyline>
-            </svg>
-          </button>
-          <button id="gated-go-home-btn" type="button" style="background: #F1F5F9; color: #475569; font-weight: 600; font-size: 0.84rem; padding: 10px 16px; border-radius: 10px; border: 1px solid #CBD5E1; cursor: pointer;">
-            Kembali ke Beranda
-          </button>
-        </div>
-      </main>
-
-      <!-- BOTTOM NAV ASB -->
-      ${renderAsbBottomNav('verifikasi', userCtx)}
-    </div>
-  `;
-
-  attachAsbBottomNavEvents(app);
-  app.querySelector('#verif-drawer-btn')?.addEventListener('click', () => openDrawer());
-  app.querySelector('#gated-go-selection-btn')?.addEventListener('click', () => navigate('/selection'));
-  app.querySelector('#gated-go-home-btn')?.addEventListener('click', () => navigate('/home'));
-}
-
 export function renderVerificationLanding() {
   const app = document.getElementById('main-content') || document.getElementById('app');
   if (!app) return;
@@ -280,18 +164,6 @@ export function renderVerificationLanding() {
     tinjauFilter.estateId = userCtx.estateName || userCtx.estateId || '';
     tinjauFilter.divisionId = userCtx.divisionName || userCtx.divisionId || '';
   }
-
-  // Gate Check untuk Asisten Bibitan (ASB):
-  // [CATATAN SIMULASI PROTOTYPE]: Dinonaktifkan sementara agar pengguna dapat membuka
-  // dan bernavigasi ke halaman Verifikasi tanpa harus menyelesaikan seluruh pemeriksaan seleksi terlebih dahulu.
-  /*
-  const gateCheck = checkAsbSelectionGate(userCtx);
-  if (gateCheck.isGated) {
-    showAsbVerificationGateModal(gateCheck.pendingSelectionCount);
-    renderGatedVerificationPlaceholder(app, userCtx, gateCheck.pendingSelectionCount);
-    return;
-  }
-  */
 
   if (currentVerifView === 'MODULE_GRID') {
     renderModuleGridView(app, userCtx);
@@ -438,8 +310,26 @@ function renderTransactionListView(app, userCtx) {
   const currentMod = VERIFICATION_10_MODULES.find(m => m.id === activeModuleId) || VERIFICATION_10_MODULES[0];
   const allRecords = getVerificationRecordsByScope(userCtx);
 
-  // Filter items matching this module
-  const combinedList = allRecords.filter(item => currentMod.types.includes(item.referenceType) || item.moduleCategory === currentMod.id);
+  // Filter items matching this module and sort: Menunggu at top, Terverifikasi at bottom
+  const combinedList = allRecords
+    .filter(item => currentMod.types.includes(item.referenceType) || item.moduleCategory === currentMod.id)
+    .sort((a, b) => {
+      const isVerifiedA = a.verificationStatus === VERIFICATION_STATUS.TERVERIFIKASI || a.verificationStatus === VERIFICATION_STATUS.DATA_TERKONFIRMASI;
+      const isReturnedA = a.verificationStatus === VERIFICATION_STATUS.DIKEMBALIKAN || a.currentStatus === 'DIKEMBALIKAN' || a.currentStatus === 'REVISION' || a.rawRecord?.status === 'DIKEMBALIKAN';
+      const prioA = (!isVerifiedA && !isReturnedA) ? 1 : (isReturnedA ? 2 : 3);
+
+      const isVerifiedB = b.verificationStatus === VERIFICATION_STATUS.TERVERIFIKASI || b.verificationStatus === VERIFICATION_STATUS.DATA_TERKONFIRMASI;
+      const isReturnedB = b.verificationStatus === VERIFICATION_STATUS.DIKEMBALIKAN || b.currentStatus === 'DIKEMBALIKAN' || b.currentStatus === 'REVISION' || b.rawRecord?.status === 'DIKEMBALIKAN';
+      const prioB = (!isVerifiedB && !isReturnedB) ? 1 : (isReturnedB ? 2 : 3);
+
+      if (prioA !== prioB) return prioA - prioB;
+
+      const timeA = new Date(a.submittedAt || a.date || a.createdAt || 0).getTime();
+      const timeB = new Date(b.submittedAt || b.date || b.createdAt || 0).getTime();
+      if (timeB !== timeA) return timeB - timeA;
+
+      return String(b.referenceDocNo || b.docNo || b.id || '').localeCompare(String(a.referenceDocNo || a.docNo || a.id || ''));
+    });
 
   app.innerHTML = `
     <div class="page verif-page" style="display: flex; flex-direction: column; height: 100%; min-height: 0; background: #F8FAFC; position: relative; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
@@ -738,6 +628,8 @@ function renderTransactionDetailView(app, userCtx) {
   const isWorkerLevelMaintenance = isMaintenanceWorkerApprovalItem(selectedTxItem);
   const rawMaintenance = selectedTxItem.rawRecord || {};
   const maintenanceRoleCode = rawMaintenance.workGroupRoleCode || rawMaintenance.workGroup?.roleCode || rawMaintenance.workGroup?.workGroupRoleCode || '-';
+  const rawItem = selectedTxItem.rawRecord || {};
+  const photoUrl = rawItem.photoUrl || rawItem.evidencePhoto || rawItem.photo || rawItem.foto || rawItem.fotoUrl || selectedTxItem.photoUrl || selectedTxItem.evidencePhoto;
 
   // Render Rincian Data dinamis dari normalized fields (Zero hardcoding)
   const detailRows = (norm.fields || []).map(f => `
@@ -840,6 +732,18 @@ function renderTransactionDetailView(app, userCtx) {
             ${isWorkerLevelMaintenance ? renderMaintenanceVerificationDetails(selectedTxItem, true) : detailRows}
           </div>
         </div>
+
+        <!-- LAMPIRAN FOTO DOKUMENTASI (JIKA ADA) -->
+        ${photoUrl ? `
+          <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
+            <div style="font-size: 0.84rem; font-weight: 800; color: #111827; margin-bottom: 8px; border-bottom: 1.5px solid #F1F5F9; padding-bottom: 6px;">
+              Dokumentasi Foto Lapangan
+            </div>
+            <div style="border-radius: 8px; overflow: hidden; max-height: 240px; background: #0F172A; display: flex; align-items: center; justify-content: center;">
+              <img src="${photoUrl}" alt="Dokumentasi Lapangan" style="width: 100%; height: auto; max-height: 240px; object-fit: contain;">
+            </div>
+          </div>
+        ` : ''}
 
         <!-- ACTION BUTTONS IF PENDING, OR STATUS NOTICE -->
         ${isReturned ? `

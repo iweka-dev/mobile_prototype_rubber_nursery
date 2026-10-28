@@ -16,56 +16,89 @@ function isQuotaError(err) {
   );
 }
 
-function sanitizeLargeMedia(data) {
+function isBase64Media(val) {
+  return typeof val === 'string' && val.startsWith('data:image/') && val.length > 500;
+}
+
+function sanitizeItemMedia(item) {
+  if (!item || typeof item !== 'object') return item;
+  const copy = { ...item };
+  if (Array.isArray(copy.photos) && copy.photos.length > 0) {
+    copy.photos = copy.photos.map(p => isBase64Media(p) ? '[COMPACTED_PHOTO]' : p);
+  }
+  if (isBase64Media(copy.photoData)) {
+    copy.photoData = '[PHOTO_PRUNED]';
+  }
+  if (isBase64Media(copy.photoEvidence)) {
+    copy.photoEvidence = (copy.photo?.dataUrl || copy.photoData) ? '[SEE_PHOTO_DATA]' : '[PHOTO_PRUNED]';
+  } else if (copy.photoEvidence && typeof copy.photoEvidence === 'object' && isBase64Media(copy.photoEvidence.image)) {
+    copy.photoEvidence = { ...copy.photoEvidence, image: '[PHOTO_PRUNED]' };
+  }
+  if (copy.photo && typeof copy.photo === 'object') {
+    let pCopy = null;
+    if (isBase64Media(copy.photo.dataUrl)) {
+      pCopy = { ...(pCopy || copy.photo), dataUrl: '[PHOTO_PRUNED]' };
+    }
+    if (isBase64Media(copy.photo.image)) {
+      pCopy = { ...(pCopy || copy.photo), image: '[PHOTO_PRUNED]' };
+    }
+    if (pCopy) copy.photo = pCopy;
+  }
+  if (isBase64Media(copy.image)) {
+    copy.image = '[PHOTO_PRUNED]';
+  }
+  if (typeof copy.signatureDataUrl === 'string' && copy.signatureDataUrl.startsWith('data:image/') && copy.signatureDataUrl.length > 5000) {
+    copy.signatureDataUrl = '[SIGNATURE_PRUNED]';
+  }
+  return copy;
+}
+
+function sanitizeLargeMedia(data, keepRecentCount = 3) {
   if (!data) return data;
   if (Array.isArray(data)) {
-    return data.map(item => sanitizeLargeMedia(item));
+    return data.map((item, idx) => {
+      // Keep recent items intact
+      if (idx >= data.length - keepRecentCount) {
+        return item;
+      }
+      return sanitizeItemMedia(item);
+    });
   }
   if (typeof data === 'object') {
-    const copy = { ...data };
-    if (Array.isArray(copy.photos) && copy.photos.length > 0) {
-      copy.photos = copy.photos.map(p => (typeof p === 'string' && p.startsWith('data:image/') && p.length > 500) ? '[COMPACTED_PHOTO]' : p);
-    }
-    if (typeof copy.photoEvidence === 'string' && copy.photoEvidence.startsWith('data:image/') && copy.photoEvidence.length > 500) {
-      if (copy.photo?.dataUrl || copy.photoData) {
-        copy.photoEvidence = '[SEE_PHOTO_DATA]';
-      }
-    }
-    return copy;
+    return sanitizeItemMedia(data);
   }
   return data;
 }
 
-function pruneStorageQuota() {
+function pruneStorageQuota(aggressive = false) {
   if (typeof localStorage === 'undefined') return;
   try {
-    const heavyKeys = [
-      'sigma:selection_documentation_photos',
-      'sigma:selection_transactions',
-      'sigma:seeding_transactions',
-      'sigma:receipt_ksp_transactions'
-    ];
-    for (const fullKey of heavyKeys) {
+    const keepCount = aggressive ? 1 : 3;
+    const minLengthThreshold = aggressive ? 20000 : 50000;
+
+    // Scan all keys starting with PREFIX
+    for (let i = 0; i < localStorage.length; i++) {
+      const fullKey = localStorage.key(i);
+      if (!fullKey || !fullKey.startsWith(PREFIX)) continue;
       const raw = localStorage.getItem(fullKey);
-      if (!raw || raw.length < 300000) continue;
+      if (!raw || raw.length < minLengthThreshold) continue;
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           const compacted = parsed.map((item, idx) => {
-            // Keep recent 3 photos, compact older ones
-            if (idx < parsed.length - 3) {
-              const c = { ...item };
-              if (c.photoData && c.photoData.length > 5000) {
-                c.photoData = '[PHOTO_PRUNED]';
-              }
-              if (c.photo && c.photo.dataUrl && c.photo.dataUrl.length > 5000) {
-                c.photo = { ...c.photo, dataUrl: '[PHOTO_PRUNED]' };
-              }
-              return c;
-            }
-            return item;
+            if (idx >= parsed.length - keepCount) return item;
+            return sanitizeItemMedia(item);
           });
-          localStorage.setItem(fullKey, JSON.stringify(compacted));
+          const newRaw = JSON.stringify(compacted);
+          if (newRaw.length < raw.length) {
+            localStorage.setItem(fullKey, newRaw);
+          }
+        } else if (typeof parsed === 'object' && parsed !== null) {
+          const compacted = sanitizeItemMedia(parsed);
+          const newRaw = JSON.stringify(compacted);
+          if (newRaw.length < raw.length) {
+            localStorage.setItem(fullKey, newRaw);
+          }
         }
       } catch (_) {}
     }
@@ -98,35 +131,27 @@ export const storage = {
     } catch (err) {
       if (isQuotaError(err)) {
         console.warn(`[storage] LocalStorage quota exceeded writing "${key}". Running compaction...`);
-        pruneStorageQuota();
-        const sanitized = sanitizeLargeMedia(value);
+        pruneStorageQuota(false);
+        const sanitized = sanitizeLargeMedia(value, 3);
         try {
           localStorage.setItem(fullKey, JSON.stringify(sanitized));
           notifyChange(sanitized);
           return;
         } catch (err2) {
           if (isQuotaError(err2)) {
+            console.warn(`[storage] LocalStorage still exceeded. Running aggressive compaction for "${key}"...`);
+            pruneStorageQuota(true);
+            const deeplySanitized = sanitizeLargeMedia(value, 1);
             try {
-              // Deep prune across all keys starting with PREFIX
-              for (let i = 0; i < localStorage.length; i++) {
-                const k = localStorage.key(i);
-                if (k && k.startsWith(PREFIX) && k !== fullKey) {
-                  const val = localStorage.getItem(k);
-                  if (val && val.length > 200000) {
-                    try {
-                      const p = JSON.parse(val);
-                      localStorage.setItem(k, JSON.stringify(sanitizeLargeMedia(p)));
-                    } catch (_) {}
-                  }
-                }
-              }
-              localStorage.setItem(fullKey, JSON.stringify(sanitized));
-              notifyChange(sanitized);
+              localStorage.setItem(fullKey, JSON.stringify(deeplySanitized));
+              notifyChange(deeplySanitized);
               return;
             } catch (err3) {
               console.error(`[storage] Critical quota exceeded on "${key}":`, err3?.message || err3);
+              throw new Error(`Kapasitas penyimpanan perangkat penuh. Tidak dapat menyimpan "${key}".`);
             }
           }
+          throw err2;
         }
       } else {
         throw err;

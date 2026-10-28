@@ -579,294 +579,289 @@ export function renderNurseryHistory() {
     <div class="page" style="display: flex; flex-direction: column; height: 100%; background: #F5F5F5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
       
       <!-- HEADER -->
-      <header style="display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 16px; background: #FFFFFF; border-bottom: 1px solid #D9D9D9; flex-shrink: 0;">
+      <header style="display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 16px; background: #FFFFFF; border-bottom: 1px solid #E2E8F0; flex-shrink: 0;">
         <div style="display: flex; align-items: center;">
           <button id="btn-back" type="button" aria-label="Kembali" style="padding: 8px; margin-left: -8px; background: transparent; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #116834;">
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
               <line x1="19" y1="12" x2="5" y2="12"></line>
               <polyline points="12 19 5 12 12 5"></polyline>
             </svg>
           </button>
-          <h1 style="font-size: 1.05rem; font-weight: 700; color: #111111; margin: 0 0 0 8px;">Laporan & Riwayat Pembibitan</h1>
+          <h1 style="font-size: 1.05rem; font-weight: 700; color: #0F172A; margin: 0 0 0 8px;">Laporan & Riwayat Pembibitan</h1>
         </div>
       </header>
 
       <!-- CONTENT WRAPPER -->
       <main style="flex: 1; overflow-y: auto; padding: 14px 16px; min-height: 0; box-sizing: border-box;">
         
-        <!-- CARD SUMMARY: FILTER PROGRAM & METRIK STOK -->
-        <div style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 10px; padding: 14px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); box-sizing: border-box;">
+        <!-- 1. FILTER CARD (STANDALONE) -->
+        <section style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); box-sizing: border-box;">
+          <div style="font-size: 0.65rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px;">
+            Filter Data Laporan
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            
+            <!-- FILTER 1: PROGRAM PEMBIBITAN -->
+            <div style="position: relative;">
+              <select id="select-program-filter" style="width: 100%; font-size: 0.74rem; font-weight: 600; color: #1E293B; border: 1px solid #CBD5E1; background: #FFFFFF; border-radius: 6px; padding: 7px 24px 7px 9px; outline: none; appearance: none; cursor: pointer; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; box-sizing: border-box;">
+                <option value="ALL" ${selectedProgramFilter === 'ALL' ? 'selected' : ''}>Semua Program</option>
+                ${availablePrograms.map(p => `<option value="${p}" ${selectedProgramFilter === p ? 'selected' : ''}>${p}</option>`).join('')}
+              </select>
+              <svg viewBox="0 0 24 24" width="13" height="13" stroke="#64748B" stroke-width="2" fill="none" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </div>
+
+            <!-- FILTER 2: TAHAPAN PERTUMBUHAN -->
+            <div style="position: relative;">
+              <select id="select-stage-filter" style="width: 100%; font-size: 0.74rem; font-weight: 600; color: #1E293B; border: 1px solid #CBD5E1; background: #FFFFFF; border-radius: 6px; padding: 7px 24px 7px 9px; outline: none; appearance: none; cursor: pointer; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; box-sizing: border-box;">
+                <option value="ALL" ${selectedStageFilter === 'ALL' ? 'selected' : ''}>Semua Tahapan</option>
+                <option value="Rubber Main Nursery" ${selectedStageFilter === 'Rubber Main Nursery' ? 'selected' : ''}>Main Nursery</option>
+                <option value="Rubber Advance Planting Material" ${selectedStageFilter === 'Rubber Advance Planting Material' ? 'selected' : ''}>Advance Planting</option>
+              </select>
+              <svg viewBox="0 0 24 24" width="13" height="13" stroke="#64748B" stroke-width="2" fill="none" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- 2. RINGKASAN METRIK STOK UTAMA (STANDALONE GRID) -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+          <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 11px 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); box-sizing: border-box; min-width: 0;">
+            <div style="font-size: 0.64rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Stok Awal Penerimaan</div>
+            <div style="font-size: 1.20rem; font-weight: 800; color: #0F172A; margin-top: 3px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              ${stokAwalPenerimaan.toLocaleString('id-ID')} <span style="font-size: 0.70rem; font-weight: 600; color: #64748B;">Pkk</span>
+            </div>
+            <div style="font-size: 0.62rem; color: #94A3B8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Total Masuk</div>
+          </div>
+
+          <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 11px 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); box-sizing: border-box; min-width: 0;">
+            <div style="font-size: 0.64rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Total Bibit Tersedia</div>
+            <div style="font-size: 1.20rem; font-weight: 800; color: #116834; margin-top: 3px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              ${stokAktualKetersediaan.toLocaleString('id-ID')} <span style="font-size: 0.70rem; font-weight: 600; color: #475569;">Pkk</span>
+            </div>
+            <div style="font-size: 0.62rem; color: #64748B; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Stok Aktual (Non-Afkir)</div>
+          </div>
+        </div>
+
+        <!-- 3. STOK BERDASARKAN TAHAPAN PERTUMBUHAN (STANDALONE SECTION CARD) -->
+        <section style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); box-sizing: border-box;">
+          <div style="font-size: 0.65rem; font-weight: 700; color: #64748B; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.03em;">
+            Stok Berdasarkan Tahapan Pertumbuhan
+          </div>
           
-          <!-- FILTER DROPDOWNS BARIS (RESPONSIVE GRID) -->
-          <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #F3F4F6;">
-            <div style="font-size: 0.65rem; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px;">
-              Filter Data Laporan
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+            <!-- TAHAPAN 1: RUBBER MAIN NURSERY -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 9px 10px; box-sizing: border-box; min-width: 0;">
+              <div style="font-size: 0.68rem; font-weight: 700; color: #1E293B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Main Nursery (RMN)</div>
+              <div style="font-size: 1.05rem; font-weight: 800; color: #0F172A; margin-top: 2px; white-space: nowrap;">
+                ${stokAktualRMN.toLocaleString('id-ID')} <span style="font-size: 0.68rem; font-weight: 600; color: #64748B;">Pkk</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 0.60rem; color: #64748B; margin-top: 4px; padding-top: 4px; border-top: 1px dashed #E2E8F0; gap: 4px; flex-wrap: wrap;">
+                <span>Awal: ${stokAwalRMN.toLocaleString('id-ID')}</span>
+                <span>Afkir: (${afkirRMN.toLocaleString('id-ID')})</span>
+              </div>
             </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-              
-              <!-- FILTER 1: PROGRAM PEMBIBITAN -->
-              <div style="position: relative;">
-                <select id="select-program-filter" style="width: 100%; font-size: 0.74rem; font-weight: 700; color: #116834; border: 1px solid #A5D6A7; background: #E8F5E9; border-radius: 6px; padding: 7px 22px 7px 8px; outline: none; appearance: none; cursor: pointer; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; box-sizing: border-box;">
-                  <option value="ALL" ${selectedProgramFilter === 'ALL' ? 'selected' : ''}>Semua Program</option>
-                  ${availablePrograms.map(p => `<option value="${p}" ${selectedProgramFilter === p ? 'selected' : ''}>${p}</option>`).join('')}
-                </select>
-                <svg viewBox="0 0 24 24" width="12" height="12" stroke="#116834" stroke-width="2.5" fill="none" style="position: absolute; right: 7px; top: 50%; transform: translateY(-50%); pointer-events: none;"><polyline points="6 9 12 15 18 9"></polyline></svg>
-              </div>
 
-              <!-- FILTER 2: TAHAPAN PERTUMBUHAN -->
-              <div style="position: relative;">
-                <select id="select-stage-filter" style="width: 100%; font-size: 0.74rem; font-weight: 700; color: #1E40AF; border: 1px solid #BFDBFE; background: #EFF6FF; border-radius: 6px; padding: 7px 22px 7px 8px; outline: none; appearance: none; cursor: pointer; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; box-sizing: border-box;">
-                  <option value="ALL" ${selectedStageFilter === 'ALL' ? 'selected' : ''}>Semua Tahapan</option>
-                  <option value="Rubber Main Nursery" ${selectedStageFilter === 'Rubber Main Nursery' ? 'selected' : ''}>Main Nursery</option>
-                  <option value="Rubber Advance Planting Material" ${selectedStageFilter === 'Rubber Advance Planting Material' ? 'selected' : ''}>Advance Planting</option>
-                </select>
-                <svg viewBox="0 0 24 24" width="12" height="12" stroke="#1E40AF" stroke-width="2.5" fill="none" style="position: absolute; right: 7px; top: 50%; transform: translateY(-50%); pointer-events: none;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            <!-- TAHAPAN 2: RUBBER ADVANCE PLANTING MATERIAL -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 9px 10px; box-sizing: border-box; min-width: 0;">
+              <div style="font-size: 0.68rem; font-weight: 700; color: #1E293B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Advance Planting (APM)</div>
+              <div style="font-size: 1.05rem; font-weight: 800; color: #0F172A; margin-top: 2px; white-space: nowrap;">
+                ${stokAktualAPM.toLocaleString('id-ID')} <span style="font-size: 0.68rem; font-weight: 600; color: #64748B;">Pkk</span>
               </div>
-
+              <div style="display: flex; justify-content: space-between; font-size: 0.60rem; color: #64748B; margin-top: 4px; padding-top: 4px; border-top: 1px dashed #E2E8F0; gap: 4px; flex-wrap: wrap;">
+                <span>Awal: ${stokAwalAPM.toLocaleString('id-ID')}</span>
+                <span>Afkir: (${afkirAPM.toLocaleString('id-ID')})</span>
+              </div>
             </div>
           </div>
 
-          <!-- 2 BANNER UTAMA: STOK AWAL & BIBIT TERSEDIA (STOK AKTUAL) -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
-            <div style="background: #F0FDF4; border: 1px solid #DCFCE7; border-radius: 8px; padding: 10px 12px; box-sizing: border-box;">
-              <div style="font-size: 0.62rem; font-weight: 700; color: #166534; text-transform: uppercase; letter-spacing: 0.02em;">Stok Awal Penerimaan</div>
-              <div style="font-size: 1.20rem; font-weight: 900; color: #116834; margin-top: 3px; white-space: nowrap;">
-                ${stokAwalPenerimaan.toLocaleString('id-ID')} <span style="font-size: 0.70rem; font-weight: 700;">Pkk</span>
-              </div>
-              <div style="font-size: 0.62rem; color: #15803D; margin-top: 2px;">Total Masuk</div>
-            </div>
-
-            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; box-sizing: border-box;">
-              <div style="font-size: 0.62rem; font-weight: 700; color: #0F172A; text-transform: uppercase; letter-spacing: 0.02em;">Total Bibit Tersedia</div>
-              <div style="font-size: 1.20rem; font-weight: 900; color: #0F172A; margin-top: 3px; white-space: nowrap;">
-                ${stokAktualKetersediaan.toLocaleString('id-ID')} <span style="font-size: 0.70rem; font-weight: 700;">Pkk</span>
-              </div>
-              <div style="font-size: 0.62rem; color: #64748B; margin-top: 2px;">Stok Aktual (Non-Afkir)</div>
-            </div>
-          </div>
-
-          <!-- KOMPARASI STOK BERDASARKAN TAHAPAN PERTUMBUHAN -->
-          <div style="margin-bottom: 10px;">
-            <div style="font-size: 0.64rem; font-weight: 700; color: #6B7280; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.02em;">
-              Stok Berdasarkan Tahapan Pertumbuhan
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
-              
-              <!-- TAHAPAN 1: RUBBER MAIN NURSERY -->
-              <div style="background: #FAF5FF; border: 1px solid #F3F4F6; border-radius: 6px; padding: 8px 10px; box-sizing: border-box;">
-                <div style="font-size: 0.65rem; font-weight: 700; color: #6B21A8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Main Nursery (RMN)</div>
-                <div style="font-size: 0.95rem; font-weight: 900; color: #581C87; margin-top: 2px; white-space: nowrap;">
-                  ${stokAktualRMN.toLocaleString('id-ID')} <span style="font-size: 0.65rem; font-weight: 700;">Pkk</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.60rem; color: #7E22CE; margin-top: 3px; padding-top: 3px; border-top: 1px dashed #E9D5FF;">
-                  <span>Awal: ${stokAwalRMN.toLocaleString('id-ID')}</span>
-                  <span style="color: #DC2626; font-weight: 700;">Afkir: (${afkirRMN.toLocaleString('id-ID')})</span>
-                </div>
-              </div>
-
-              <!-- TAHAPAN 2: RUBBER ADVANCE PLANTING MATERIAL -->
-              <div style="background: #EFF6FF; border: 1px solid #DBEAFE; border-radius: 6px; padding: 8px 10px; box-sizing: border-box;">
-                <div style="font-size: 0.65rem; font-weight: 700; color: #1D4ED8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Advance Planting (APM)</div>
-                <div style="font-size: 0.95rem; font-weight: 900; color: #1E3A8A; margin-top: 2px; white-space: nowrap;">
-                  ${stokAktualAPM.toLocaleString('id-ID')} <span style="font-size: 0.65rem; font-weight: 700;">Pkk</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.60rem; color: #2563EB; margin-top: 3px; padding-top: 3px; border-top: 1px dashed #BFDBFE;">
-                  <span>Awal: ${stokAwalAPM.toLocaleString('id-ID')}</span>
-                  <span style="color: #DC2626; font-weight: 700;">Afkir: (${afkirAPM.toLocaleString('id-ID')})</span>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          <!-- STRIP RINCIAN MUTASI PEMBIBITAN -->
-          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: #F9FAFB; border: 1px solid #F3F4F6; border-radius: 6px; padding: 7px 4px; text-align: center; margin-bottom: 12px; box-sizing: border-box;">
+          <!-- STRIP RINCIAN MUTASI PEMBIBITAN (3-KOLOM UNIFIED) -->
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 7px 4px; text-align: center; box-sizing: border-box;">
             <div style="min-width: 0;">
-              <div style="font-size: 0.60rem; color: #6B7280; font-weight: 600;">Jlh Awal Semai</div>
-              <div style="font-size: 0.78rem; font-weight: 800; color: #374151; margin-top: 1px; white-space: nowrap;">
+              <div style="font-size: 0.60rem; color: #64748B; font-weight: 600;">Jlh Awal Semai</div>
+              <div style="font-size: 0.82rem; font-weight: 700; color: #0F172A; margin-top: 2px; white-space: nowrap;">
                 ${isFilteredToAPM ? '-' : `${totalDitanam.toLocaleString('id-ID')} Pkk`}
               </div>
             </div>
             <div style="min-width: 0;">
-              <div style="font-size: 0.60rem; color: #6B7280; font-weight: 600;">Diokulasi</div>
-              <div style="font-size: 0.78rem; font-weight: 800; color: #116834; margin-top: 1px; white-space: nowrap;">
+              <div style="font-size: 0.60rem; color: #64748B; font-weight: 600;">Diokulasi</div>
+              <div style="font-size: 0.82rem; font-weight: 700; color: #0F172A; margin-top: 2px; white-space: nowrap;">
                 ${isFilteredToAPM ? '-' : `${totalDiokulasi.toLocaleString('id-ID')} Pkk`}
               </div>
             </div>
             <div style="min-width: 0;">
-              <div style="font-size: 0.60rem; color: #DC2626; font-weight: 600;">Afkir/Reject</div>
-              <div style="font-size: 0.78rem; font-weight: 800; color: #DC2626; margin-top: 1px; white-space: nowrap;">(${totalAfkir.toLocaleString('id-ID')}) Pkk</div>
+              <div style="font-size: 0.60rem; color: #64748B; font-weight: 600;">Total Afkir</div>
+              <div style="font-size: 0.82rem; font-weight: 700; color: #475569; margin-top: 2px; white-space: nowrap;">(${totalAfkir.toLocaleString('id-ID')}) Pkk</div>
             </div>
           </div>
+        </section>
 
-          <!-- SECTION: RINCIAN KETERSEDIAAN STOK PER BATCH -->
-          <div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <div style="font-size: 0.68rem; font-weight: 700; color: #111827; text-transform: uppercase; letter-spacing: 0.02em;">
-                Ketersediaan Stok per Batch
-              </div>
-              <span style="font-size: 0.65rem; color: #116834; font-weight: 700; background: #E8F5E9; padding: 2px 6px; border-radius: 4px;">
-                ${filteredBatches.length} Batch Aktif
-              </span>
+        <!-- 4. KETERSEDIAAN STOK PER BATCH (STANDALONE SECTION) -->
+        <section style="margin-bottom: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div style="font-size: 0.68rem; font-weight: 700; color: #334155; text-transform: uppercase; letter-spacing: 0.03em;">
+              Ketersediaan Stok per Batch
             </div>
+            <span style="font-size: 0.68rem; color: #475569; font-weight: 600; background: #FFFFFF; border: 1px solid #E2E8F0; padding: 2px 8px; border-radius: 4px;">
+              ${filteredBatches.length} Batch Aktif
+            </span>
+          </div>
 
-            ${filteredBatches.length > 0 ? `
-              <div style="display: flex; flex-direction: column; gap: 8px;">
-                ${filteredBatches.map(b => {
-                  const isBatchAPM = b.stage === 'Rubber Advance Planting Material';
-                  return `
-                  <div style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
-                    
-                    <!-- BARIS 1: NAMA BATCH, BADGE TAHAPAN & BADGE LOKASI (TIDAK AKAN PERNAH TABRAKAN / WRAP) -->
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px;">
-                      <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-                        <span style="font-weight: 800; font-size: 0.96rem; color: #111827; white-space: nowrap; word-break: keep-all; letter-spacing: -0.01em;">${b.batchNo}</span>
-                        <span style="font-size: 0.60rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${isBatchAPM ? '#EFF6FF' : '#FAF5FF'}; color: ${isBatchAPM ? '#1E40AF' : '#6B21A8'}; border: 1px solid ${isBatchAPM ? '#BFDBFE' : '#E9D5FF'}; white-space: nowrap; flex-shrink: 0;">
-                          ${isBatchAPM ? 'APM' : 'Main Nursery'}
-                        </span>
-                      </div>
-                      <div style="font-size: 0.65rem; font-weight: 600; color: #4B5563; background: #F3F4F6; border: 1px solid #E5E7EB; border-radius: 4px; padding: 2px 7px; white-space: nowrap; flex-shrink: 0;">
-                        ${b.bedengan && b.bedengan !== '-' ? b.bedengan : 'Bedengan Lapangan'}
-                      </div>
-                    </div>
-
-                    <!-- BARIS 2: BANNER STOK TERSEDIA (LEBAR PENUH & WRAP-PROOF) -->
-                    <div style="display: flex; justify-content: space-between; align-items: center; background: #F0FDF4; border: 1px solid #DCFCE7; border-radius: 6px; padding: 7px 10px; margin-bottom: 8px;">
-                      <span style="font-size: 0.65rem; font-weight: 700; color: #166534; text-transform: uppercase; letter-spacing: 0.02em; white-space: nowrap;">
-                        Stok Tersedia (Hidup)
+          ${filteredBatches.length > 0 ? `
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              ${filteredBatches.map(b => {
+                const isBatchAPM = b.stage === 'Rubber Advance Planting Material';
+                return `
+                <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); box-sizing: border-box;">
+                  
+                  <!-- BARIS 1: NAMA BATCH, BADGE TAHAPAN & BADGE LOKASI -->
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px;">
+                    <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                      <span style="font-weight: 700; font-size: 0.96rem; color: #0F172A; white-space: nowrap; word-break: keep-all;">${b.batchNo}</span>
+                      <span style="font-size: 0.64rem; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: #F8FAFC; color: #475569; border: 1px solid #E2E8F0; white-space: nowrap; flex-shrink: 0;">
+                        ${isBatchAPM ? 'APM' : 'Main Nursery'}
                       </span>
-                      <div style="display: flex; align-items: baseline; gap: 3px; white-space: nowrap; flex-shrink: 0;">
-                        <span style="font-size: 1.10rem; font-weight: 900; color: #116834; line-height: 1;">
-                          ${b.stokAktual.toLocaleString('id-ID')}
-                        </span>
-                        <span style="font-size: 0.68rem; font-weight: 700; color: #15803D;">Pkk</span>
+                    </div>
+                    <div style="font-size: 0.64rem; font-weight: 600; color: #475569; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 4px; padding: 2px 7px; white-space: nowrap; flex-shrink: 0;">
+                      ${b.bedengan && b.bedengan !== '-' ? b.bedengan : 'Bedengan Lapangan'}
+                    </div>
+                  </div>
+
+                  <!-- BARIS 2: BANNER STOK TERSEDIA (CORPORATE CLEAN) -->
+                  <div style="display: flex; justify-content: space-between; align-items: center; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 8px 12px; margin-bottom: 8px;">
+                    <span style="font-size: 0.65rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap;">
+                      Stok Tersedia (Hidup)
+                    </span>
+                    <div style="display: flex; align-items: baseline; gap: 3px; white-space: nowrap; flex-shrink: 0;">
+                      <span style="font-size: 1.15rem; font-weight: 800; color: #116834; line-height: 1;">
+                        ${b.stokAktual.toLocaleString('id-ID')}
+                      </span>
+                      <span style="font-size: 0.68rem; font-weight: 600; color: #475569;">Pkk</span>
+                    </div>
+                  </div>
+
+                  <!-- BARIS 3: STATUS KESIAPAN BIBIT & POPULASI KLON (CLEAN & MINIMALIST) -->
+                  ${!isBatchAPM ? `
+                    <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px;">
+                      
+                      <!-- SUB 1: BIBIT SUDAH DIOKULASI (ICON-FREE & CLEAN) -->
+                      <div style="margin-bottom: ${b.sisaBatangBawahHidup > 0 ? '5px' : '0'};">
+                        <div style="font-size: 0.65rem; font-weight: 700; color: #334155; text-transform: uppercase; margin-bottom: 3px; letter-spacing: 0.02em;">
+                          Bibit Sudah Diokulasi (${b.stokOkulasiHidup.toLocaleString('id-ID')} Pkk)
+                        </div>
+                        ${b.klonPopulations.length > 0 ? `
+                          <div style="display: flex; flex-direction: column; gap: 3px; padding-left: 2px;">
+                            ${b.klonPopulations.map(kp => `
+                              <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.68rem;">
+                                <span style="color: #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 6px;">
+                                  Klon <strong style="color: #0F172A;">${kp.klon}</strong> <span style="color: #64748B; font-size: 0.60rem;">(${kp.type})</span>
+                                </span>
+                                <span style="font-weight: 700; color: #0F172A; white-space: nowrap; flex-shrink: 0;">
+                                  ${kp.jumlah.toLocaleString('id-ID')} Pkk
+                                </span>
+                              </div>
+                            `).join('')}
+                          </div>
+                        ` : `
+                          <div style="font-size: 0.65rem; color: #94A3B8; font-style: italic; padding-left: 2px;">Belum ada realisasi okulasi hidup</div>
+                        `}
+                      </div>
+
+                      <!-- SUB 2: BATANG BAWAH / BELUM DIOKULASI -->
+                      ${b.sisaBatangBawahHidup > 0 ? `
+                        <div style="padding-top: 5px; border-top: 1px dashed #E2E8F0; display: flex; justify-content: space-between; align-items: center; font-size: 0.68rem;">
+                          <span style="color: #64748B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Batang Bawah Belum Diokulasi (${b.rootstockKlon || 'GT1'})</span>
+                          <span style="font-weight: 600; color: #334155; white-space: nowrap; flex-shrink: 0;">${b.sisaBatangBawahHidup.toLocaleString('id-ID')} Pkk</span>
+                        </div>
+                      ` : ''}
+
+                    </div>
+                  ` : `
+                    <!-- APM: STATUS KLON BIBIT JADI -->
+                    <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem;">
+                        <span style="color: #475569; font-weight: 600; white-space: nowrap;">Klon APM Siap Tanam:</span>
+                        <strong style="color: #0F172A; font-size: 0.82rem; white-space: nowrap;">${b.klon}</strong>
+                      </div>
+                      ${b.sumber ? `
+                        <div style="font-size: 0.62rem; color: #64748B; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                          Sumber: ${b.sumber}
+                        </div>
+                      ` : ''}
+                    </div>
+                  `}
+
+                  <!-- BARIS 4: STRIP METRIK MUTASI PER BATCH (3-KOLOM UNIFIED) -->
+                  ${isBatchAPM ? `
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px 4px; text-align: center; box-sizing: border-box;">
+                      <div style="min-width: 0;">
+                        <span style="color: #64748B; font-size: 0.58rem; font-weight: 600; display: block;">Stok Diterima</span>
+                        <span style="font-weight: 700; font-size: 0.76rem; color: #0F172A; margin-top: 2px; display: block;">${b.stokAwal.toLocaleString('id-ID')} Pkk</span>
+                      </div>
+                      <div style="min-width: 0;">
+                        <span style="color: #64748B; font-size: 0.58rem; font-weight: 600; display: block;">Tipe Bibit</span>
+                        <span style="font-weight: 700; font-size: 0.76rem; color: #0F172A; margin-top: 2px; display: block;">APM Siap Tanam</span>
+                      </div>
+                      <div style="min-width: 0;">
+                        <span style="color: #64748B; font-size: 0.58rem; font-weight: 600; display: block;">Total Afkir</span>
+                        <span style="font-weight: 700; font-size: 0.76rem; color: #475569; margin-top: 2px; display: block;">(${b.afkir.toLocaleString('id-ID')}) Pkk</span>
                       </div>
                     </div>
-
-                    <!-- BARIS 3: STATUS KESIAPAN BIBIT & POPULASI KLON (KHUSUS RUBBER MAIN NURSERY) -->
-                    ${!isBatchAPM ? `
-                      <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px;">
-                        
-                        <!-- SUB 1: BIBIT SUDAH DIOKULASI -->
-                        <div style="margin-bottom: ${b.sisaBatangBawahHidup > 0 ? '5px' : '0'};">
-                          <div style="font-size: 0.62rem; font-weight: 700; color: #15803D; text-transform: uppercase; margin-bottom: 3px; letter-spacing: 0.02em;">
-                            ✓ Bibit Sudah Diokulasi (${b.stokOkulasiHidup.toLocaleString('id-ID')} Pkk):
-                          </div>
-                          ${b.klonPopulations.length > 0 ? `
-                            <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 2px;">
-                              ${b.klonPopulations.map(kp => `
-                                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.68rem;">
-                                  <span style="color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 6px;">
-                                    • Klon <strong style="color: #0F172A;">${kp.klon}</strong> <span style="color: #64748B; font-size: 0.60rem;">(${kp.type})</span>:
-                                  </span>
-                                  <span style="font-weight: 800; color: #116834; white-space: nowrap; flex-shrink: 0;">
-                                    ${kp.jumlah.toLocaleString('id-ID')} Pkk
-                                  </span>
-                                </div>
-                              `).join('')}
-                            </div>
-                          ` : `
-                            <div style="font-size: 0.65rem; color: #94A3B8; font-style: italic; padding-left: 2px;">Belum ada realisasi okulasi hidup</div>
-                          `}
-                        </div>
-
-                        <!-- SUB 2: BATANG BAWAH / BELUM DIOKULASI (HANYA MUNCUL JIKA ADA SISA HIDUP NON-AFKIR) -->
-                        ${b.sisaBatangBawahHidup > 0 ? `
-                          <div style="padding-top: 4px; border-top: 1px dashed #CBD5E1; display: flex; justify-content: space-between; align-items: center; font-size: 0.68rem;">
-                            <span style="color: #64748B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">• Batang Bawah Belum Diokulasi (${b.rootstockKlon || 'GT1'}):</span>
-                            <span style="font-weight: 700; color: #475569; white-space: nowrap; flex-shrink: 0;">${b.sisaBatangBawahHidup.toLocaleString('id-ID')} Pkk</span>
-                          </div>
-                        ` : ''}
-
+                  ` : `
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px 4px; text-align: center; box-sizing: border-box;">
+                      <div style="min-width: 0;">
+                        <span style="color: #64748B; font-size: 0.58rem; font-weight: 600; display: block;">Jlh Awal Semai</span>
+                        <span style="font-weight: 700; font-size: 0.76rem; color: #0F172A; margin-top: 2px; display: block;">${b.stokAwal.toLocaleString('id-ID')} Pkk</span>
                       </div>
-                    ` : `
-                      <!-- APM: STATUS KLON BIBIT JADI -->
-                      <div style="background: #EFF6FF; border: 1px solid #DBEAFE; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem;">
-                          <span style="color: #1E40AF; font-weight: 600; white-space: nowrap;">Klon APM Siap Tanam:</span>
-                          <strong style="color: #1E3A8A; font-size: 0.82rem; white-space: nowrap;">${b.klon}</strong>
-                        </div>
-                        ${b.sumber ? `
-                          <div style="font-size: 0.62rem; color: #60A5FA; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                            Sumber / Rekanan: ${b.sumber}
-                          </div>
-                        ` : ''}
+                      <div style="min-width: 0;">
+                        <span style="color: #64748B; font-size: 0.58rem; font-weight: 600; display: block;">Pokok Diokulasi</span>
+                        <span style="font-weight: 700; font-size: 0.76rem; color: #0F172A; margin-top: 2px; display: block;">${b.pokokDiokulasiPrimer.toLocaleString('id-ID')} Pkk</span>
+                        ${b.pokokDiokulasiJanda > 0 ? `<span style="font-size: 0.54rem; font-weight: 600; color: #64748B; margin-top: 1px; display: block;">(+${b.pokokDiokulasiJanda} Janda)</span>` : ''}
                       </div>
-                    `}
-
-                    <!-- BARIS 4: STRIP METRIK MUTASI PER BATCH (WRAP-PROOF & EQUAL HEIGHT) -->
-                    ${isBatchAPM ? `
-                      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; background: #F9FAFB; border: 1px solid #F3F4F6; border-radius: 6px; padding: 6px 3px; text-align: center; box-sizing: border-box;">
-                        <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 44px; min-width: 0;">
-                          <span style="color: #6B7280; font-size: 0.58rem; font-weight: 600; white-space: nowrap; display: block;">Stok Diterima</span>
-                          <span style="font-weight: 800; font-size: 0.72rem; color: #0369A1; margin-top: 2px; white-space: nowrap;">${b.stokAwal.toLocaleString('id-ID')} Pkk</span>
-                        </div>
-                        <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 44px; min-width: 0;">
-                          <span style="color: #6B7280; font-size: 0.58rem; font-weight: 600; white-space: nowrap; display: block;">Tipe Bibit</span>
-                          <span style="font-weight: 800; font-size: 0.72rem; color: #1E40AF; margin-top: 2px; white-space: nowrap;">APM Siap Tanam</span>
-                        </div>
-                        <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 44px; min-width: 0;">
-                          <span style="color: #DC2626; font-size: 0.58rem; font-weight: 600; white-space: nowrap; display: block;">Total Afkir</span>
-                          <span style="font-weight: 800; font-size: 0.72rem; color: #DC2626; margin-top: 2px; white-space: nowrap;">(${b.afkir.toLocaleString('id-ID')}) Pkk</span>
-                        </div>
+                      <div style="min-width: 0;">
+                        <span style="color: #64748B; font-size: 0.58rem; font-weight: 600; display: block;">Total Afkir</span>
+                        <span style="font-weight: 700; font-size: 0.76rem; color: #475569; margin-top: 2px; display: block;">(${b.afkir.toLocaleString('id-ID')}) Pkk</span>
                       </div>
-                    ` : `
-                      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; background: #F9FAFB; border: 1px solid #F3F4F6; border-radius: 6px; padding: 6px 3px; text-align: center; box-sizing: border-box;">
-                        <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 44px; min-width: 0;">
-                          <span style="color: #6B7280; font-size: 0.58rem; font-weight: 600; white-space: nowrap; display: block;">Jlh Awal Semai</span>
-                          <span style="font-weight: 800; font-size: 0.72rem; color: #374151; margin-top: 2px; white-space: nowrap;">${b.stokAwal.toLocaleString('id-ID')} Pkk</span>
-                        </div>
-                        <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 44px; min-width: 0;">
-                          <span style="color: #6B7280; font-size: 0.58rem; font-weight: 600; white-space: nowrap; display: block;">Pokok Diokulasi</span>
-                          <span style="font-weight: 800; font-size: 0.72rem; color: #116834; margin-top: 2px; white-space: nowrap;">${b.pokokDiokulasiPrimer.toLocaleString('id-ID')} Pkk</span>
-                          ${b.pokokDiokulasiJanda > 0 ? `<span style="font-size: 0.54rem; font-weight: 700; color: #92400E; margin-top: 1px; white-space: nowrap;">(+${b.pokokDiokulasiJanda} Janda)</span>` : ''}
-                        </div>
-                        <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 44px; min-width: 0;">
-                          <span style="color: #DC2626; font-size: 0.58rem; font-weight: 600; white-space: nowrap; display: block;">Total Afkir</span>
-                          <span style="font-weight: 800; font-size: 0.72rem; color: #DC2626; margin-top: 2px; white-space: nowrap;">(${b.afkir.toLocaleString('id-ID')}) Pkk</span>
-                        </div>
-                      </div>
-                    `}
+                    </div>
+                  `}
 
-                  </div>
-                `;}).join('')}
-              </div>
-            ` : `
-              <div style="background: #F9FAFB; border: 1px dashed #D1D5DB; border-radius: 6px; padding: 12px; text-align: center; font-size: 0.72rem; color: #6B7280;">
-                Belum ada data batch pada kriteria filter terpilih.
-              </div>
-            `}
-          </div>
+                </div>
+              `;}).join('')}
+            </div>
+          ` : `
+            <div style="background: #F8FAFC; border: 1px dashed #CBD5E1; border-radius: 6px; padding: 12px; text-align: center; font-size: 0.72rem; color: #64748B;">
+              Belum ada data batch pada kriteria filter terpilih.
+            </div>
+          `}
+        </section>
 
-        </div>
 
-        <!-- SEARCH INPUT BOX -->
+        <!-- SEARCH INPUT BOX (CLEAN CORPORATE) -->
         <div style="margin-bottom: 10px; position: relative;">
-          <input id="input-history-search" type="text" placeholder="Cari Dokumen, Batch, Klon, Bedengan..." value="${searchQuery}" style="width: 100%; height: 38px; background: #FFFFFF; border: 1px solid #D1D5DB; border-radius: 8px; padding: 0 12px 0 34px; font-size: 0.78rem; box-sizing: border-box; outline: none;">
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="#9CA3AF" stroke-width="2" fill="none" style="position: absolute; left: 10px; top: 11px;">
+          <input id="input-history-search" type="text" placeholder="Cari Dokumen, Batch, Klon, Bedengan..." value="${searchQuery}" style="width: 100%; height: 38px; background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; padding: 0 12px 0 34px; font-size: 0.78rem; color: #0F172A; box-sizing: border-box; outline: none;">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="#64748B" stroke-width="2" fill="none" style="position: absolute; left: 10px; top: 11px;">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
         </div>
 
-        <!-- CATEGORY FILTER CHIPS -->
-        <div style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 10px; scrollbar-width: none; -webkit-overflow-scrolling: touch;">
-          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'ALL' ? 'active' : ''}" data-cat="ALL" style="padding: 5px 11px; border-radius: 16px; font-size: 0.70rem; font-weight: 700; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'ALL' ? '#116834' : '#D1D5DB'}; background: ${activeCategoryFilter === 'ALL' ? '#116834' : '#FFFFFF'}; color: ${activeCategoryFilter === 'ALL' ? '#FFFFFF' : '#4B5563'};">
+        <!-- CATEGORY FILTER CHIPS (CLEAN CORPORATE UNIFIED) -->
+        <div style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 12px; scrollbar-width: none; -webkit-overflow-scrolling: touch;">
+          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'ALL' ? 'active' : ''}" data-cat="ALL" style="padding: 6px 12px; border-radius: 6px; font-size: 0.70rem; font-weight: ${activeCategoryFilter === 'ALL' ? '700' : '600'}; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'ALL' ? '#116834' : '#CBD5E1'}; background: ${activeCategoryFilter === 'ALL' ? '#116834' : '#FFFFFF'}; color: ${activeCategoryFilter === 'ALL' ? '#FFFFFF' : '#475569'};">
             Semua Tahapan (${allHistoryItems.length})
           </button>
-          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'RECEPTION' ? 'active' : ''}" data-cat="RECEPTION" style="padding: 5px 11px; border-radius: 16px; font-size: 0.70rem; font-weight: 700; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'RECEPTION' ? '#0369A1' : '#D1D5DB'}; background: ${activeCategoryFilter === 'RECEPTION' ? '#0369A1' : '#FFFFFF'}; color: ${activeCategoryFilter === 'RECEPTION' ? '#FFFFFF' : '#4B5563'};">
+          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'RECEPTION' ? 'active' : ''}" data-cat="RECEPTION" style="padding: 6px 12px; border-radius: 6px; font-size: 0.70rem; font-weight: ${activeCategoryFilter === 'RECEPTION' ? '700' : '600'}; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'RECEPTION' ? '#116834' : '#CBD5E1'}; background: ${activeCategoryFilter === 'RECEPTION' ? '#116834' : '#FFFFFF'}; color: ${activeCategoryFilter === 'RECEPTION' ? '#FFFFFF' : '#475569'};">
             Penerimaan (${receiptTxs.length})
           </button>
-          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'SEEDING' ? 'active' : ''}" data-cat="SEEDING" style="padding: 5px 11px; border-radius: 16px; font-size: 0.70rem; font-weight: 700; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'SEEDING' ? '#6B21A8' : '#D1D5DB'}; background: ${activeCategoryFilter === 'SEEDING' ? '#6B21A8' : '#FFFFFF'}; color: ${activeCategoryFilter === 'SEEDING' ? '#FFFFFF' : '#4B5563'};">
+          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'SEEDING' ? 'active' : ''}" data-cat="SEEDING" style="padding: 6px 12px; border-radius: 6px; font-size: 0.70rem; font-weight: ${activeCategoryFilter === 'SEEDING' ? '700' : '600'}; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'SEEDING' ? '#116834' : '#CBD5E1'}; background: ${activeCategoryFilter === 'SEEDING' ? '#116834' : '#FFFFFF'}; color: ${activeCategoryFilter === 'SEEDING' ? '#FFFFFF' : '#475569'};">
             Penyemaian (${seedingTxs.length})
           </button>
-          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'BUDDING' ? 'active' : ''}" data-cat="BUDDING" style="padding: 5px 11px; border-radius: 16px; font-size: 0.70rem; font-weight: 700; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'BUDDING' ? '#116834' : '#D1D5DB'}; background: ${activeCategoryFilter === 'BUDDING' ? '#116834' : '#FFFFFF'}; color: ${activeCategoryFilter === 'BUDDING' ? '#FFFFFF' : '#4B5563'};">
+          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'BUDDING' ? 'active' : ''}" data-cat="BUDDING" style="padding: 6px 12px; border-radius: 6px; font-size: 0.70rem; font-weight: ${activeCategoryFilter === 'BUDDING' ? '700' : '600'}; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'BUDDING' ? '#116834' : '#CBD5E1'}; background: ${activeCategoryFilter === 'BUDDING' ? '#116834' : '#FFFFFF'}; color: ${activeCategoryFilter === 'BUDDING' ? '#FFFFFF' : '#475569'};">
             Okulasi (${buddingTxs.length})
           </button>
-          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'INSPECTION' ? 'active' : ''}" data-cat="INSPECTION" style="padding: 5px 11px; border-radius: 16px; font-size: 0.70rem; font-weight: 700; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'INSPECTION' ? '#3730A3' : '#D1D5DB'}; background: ${activeCategoryFilter === 'INSPECTION' ? '#3730A3' : '#FFFFFF'}; color: ${activeCategoryFilter === 'INSPECTION' ? '#FFFFFF' : '#4B5563'};">
+          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'INSPECTION' ? 'active' : ''}" data-cat="INSPECTION" style="padding: 6px 12px; border-radius: 6px; font-size: 0.70rem; font-weight: ${activeCategoryFilter === 'INSPECTION' ? '700' : '600'}; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'INSPECTION' ? '#116834' : '#CBD5E1'}; background: ${activeCategoryFilter === 'INSPECTION' ? '#116834' : '#FFFFFF'}; color: ${activeCategoryFilter === 'INSPECTION' ? '#FFFFFF' : '#475569'};">
             Pemeriksaan (${inspectionTxs.length})
           </button>
-          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'SELECTION' ? 'active' : ''}" data-cat="SELECTION" style="padding: 5px 11px; border-radius: 16px; font-size: 0.70rem; font-weight: 700; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'SELECTION' ? '#DC2626' : '#D1D5DB'}; background: ${activeCategoryFilter === 'SELECTION' ? '#DC2626' : '#FFFFFF'}; color: ${activeCategoryFilter === 'SELECTION' ? '#FFFFFF' : '#4B5563'};">
+          <button type="button" class="btn-history-filter ${activeCategoryFilter === 'SELECTION' ? 'active' : ''}" data-cat="SELECTION" style="padding: 6px 12px; border-radius: 6px; font-size: 0.70rem; font-weight: ${activeCategoryFilter === 'SELECTION' ? '700' : '600'}; white-space: nowrap; cursor: pointer; border: 1px solid ${activeCategoryFilter === 'SELECTION' ? '#116834' : '#CBD5E1'}; background: ${activeCategoryFilter === 'SELECTION' ? '#116834' : '#FFFFFF'}; color: ${activeCategoryFilter === 'SELECTION' ? '#FFFFFF' : '#475569'};">
             Seleksi / Afkir (${selectionTxs.length})
           </button>
         </div>
@@ -875,59 +870,59 @@ export function renderNurseryHistory() {
         ${filteredItems.length > 0 ? `
           <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px;">
             ${filteredItems.map((item, idx) => `
-              <div class="card-history-entry" style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px 14px; font-size: 0.78rem; box-shadow: 0 1px 2px rgba(0,0,0,0.03); box-sizing: border-box;">
+              <div class="card-history-entry" style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px 14px; font-size: 0.78rem; box-shadow: 0 1px 2px rgba(0,0,0,0.02); box-sizing: border-box;">
                 
                 <!-- BARIS 1: NO DOKUMEN & BADGE TAHAPAN KIRI <-> TANGGAL TRANSAKSI KANAN -->
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                   <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; min-width: 0;">
-                    <span style="font-weight: 800; font-size: 0.86rem; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                    <span style="font-weight: 700; font-size: 0.86rem; color: #0F172A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;">
                       ${item.docNo}
                     </span>
-                    <span style="font-size: 0.62rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: ${item.badgeBg}; color: ${item.badgeColor}; border: 1px solid ${item.badgeBorder}; white-space: nowrap; flex-shrink: 0;">
+                    <span style="font-size: 0.62rem; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: #F8FAFC; color: #475569; border: 1px solid #E2E8F0; white-space: nowrap; flex-shrink: 0;">
                       ${item.categoryLabel}
                     </span>
                   </div>
-                  <span style="font-size: 0.68rem; color: #6B7280; font-weight: 700; white-space: nowrap; flex-shrink: 0; margin-left: 6px;">
+                  <span style="font-size: 0.68rem; color: #64748B; font-weight: 500; white-space: nowrap; flex-shrink: 0; margin-left: 6px;">
                     ${item.tanggal}
                   </span>
                 </div>
 
                 <!-- BARIS 2: BATCH, KLON, TAHAPAN PERTUMBUHAN & LOKASI -->
-                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; color: #6B7280; margin-bottom: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; color: #64748B; margin-bottom: 8px;">
                   <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 65%;">
-                    ${item.batchNo !== '-' ? `<span style="font-weight: 700; color: #374151;">${item.batchNo}</span> • ` : ''}
+                    ${item.batchNo !== '-' ? `<span style="font-weight: 600; color: #334155;">${item.batchNo}</span> · ` : ''}
                     <span>Klon: ${item.klon}</span>
-                    ${item.bedengan !== '-' ? ` • <span>${item.bedengan}</span>` : ''}
+                    ${item.bedengan !== '-' ? ` · <span>${item.bedengan}</span>` : ''}
                   </div>
-                  <div style="color: #4B5563; white-space: nowrap; flex-shrink: 0; margin-left: 6px;">
-                    Mantri: <span style="font-weight: 700; color: #111;">${item.mantri}</span>
+                  <div style="color: #64748B; white-space: nowrap; flex-shrink: 0; margin-left: 6px;">
+                    Mantri: <span style="font-weight: 600; color: #1E293B;">${item.mantri}</span>
                   </div>
                 </div>
 
-                <!-- BARIS 3: STRIP METRIK SIMETRIS 3-KOLOM -->
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: #F9FAFB; border: 1px solid #F3F4F6; border-radius: 6px; padding: 7px 4px; text-align: center; margin-bottom: 8px; box-sizing: border-box;">
+                <!-- BARIS 3: STRIP METRIK SIMETRIS 3-KOLOM (CORPORATE CLEAN) -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 7px 4px; text-align: center; margin-bottom: 8px; box-sizing: border-box;">
                   <div style="min-width: 0;">
-                    <div style="font-size: 0.62rem; color: #6B7280; font-weight: 600;">${item.summaryCol1.label}</div>
-                    <div style="font-size: 0.78rem; font-weight: 700; color: ${item.summaryCol1.color}; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                    <div style="font-size: 0.60rem; color: #64748B; font-weight: 600;">${item.summaryCol1.label}</div>
+                    <div style="font-size: 0.78rem; font-weight: 700; color: #0F172A; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                       ${item.summaryCol1.val}
                     </div>
                   </div>
                   <div style="min-width: 0;">
-                    <div style="font-size: 0.62rem; color: #6B7280; font-weight: 600;">${item.summaryCol2.label}</div>
-                    <div style="font-size: 0.78rem; font-weight: ${item.summaryCol2.isBold ? '800' : '700'}; color: ${item.summaryCol2.color}; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.summaryCol2.val}">
+                    <div style="font-size: 0.60rem; color: #64748B; font-weight: 600;">${item.summaryCol2.label}</div>
+                    <div style="font-size: 0.78rem; font-weight: 700; color: #0F172A; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.summaryCol2.val}">
                       ${item.summaryCol2.val}
                     </div>
                   </div>
                   <div style="min-width: 0;">
-                    <div style="font-size: 0.62rem; color: #6B7280; font-weight: 600;">${item.summaryCol3.label}</div>
-                    <div style="font-size: 0.78rem; font-weight: ${item.summaryCol3.isBold ? '800' : '700'}; color: ${item.summaryCol3.color}; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                    <div style="font-size: 0.60rem; color: #64748B; font-weight: 600;">${item.summaryCol3.label}</div>
+                    <div style="font-size: 0.78rem; font-weight: 700; color: #0F172A; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                       ${item.summaryCol3.val}
                     </div>
                   </div>
                 </div>
 
                 <!-- TOMBOL TOGGLE EXPAND RINCIAN -->
-                <button type="button" class="btn-toggle-expand-history" data-id="${item.id}" style="width: 100%; background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 6px; height: 32px; font-size: 0.72rem; font-weight: 700; color: #4B5563; display: flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer;">
+                <button type="button" class="btn-toggle-expand-history" data-id="${item.id}" style="width: 100%; background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; height: 32px; font-size: 0.72rem; font-weight: 600; color: #334155; display: flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer;">
                   <span class="label-expand">Lihat Rincian Lengkap</span>
                   <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" class="icon-expand-chevron">
                     <polyline points="6 9 12 15 18 9"></polyline>
@@ -935,15 +930,15 @@ export function renderNurseryHistory() {
                 </button>
 
                 <!-- DETAIL EXPANDED CONTENT -->
-                <div id="detail-${item.id}" class="history-expanded-detail" style="display: none; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 10px 12px; margin-top: 8px; font-size: 0.73rem;">
-                  <div style="font-weight: 700; color: #111827; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #E5E7EB;">
+                <div id="detail-${item.id}" class="history-expanded-detail" style="display: none; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 10px 12px; margin-top: 8px; font-size: 0.73rem;">
+                  <div style="font-weight: 700; color: #0F172A; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #E2E8F0;">
                     Rincian Transaksi (${item.docNo})
                   </div>
                   <div style="display: flex; flex-direction: column; gap: 4px;">
                     ${item.details.map(d => `
                       <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
-                        <span style="color: #6B7280; flex-shrink: 0;">${d.label}:</span>
-                        <span style="font-weight: 600; color: #111827; text-align: right; word-break: break-word;">${d.val}</span>
+                        <span style="color: #64748B; flex-shrink: 0;">${d.label}:</span>
+                        <span style="font-weight: 600; color: #0F172A; text-align: right; word-break: break-word;">${d.val}</span>
                       </div>
                     `).join('')}
                   </div>
@@ -952,6 +947,7 @@ export function renderNurseryHistory() {
               </div>
             `).join('')}
           </div>
+
         ` : renderEmptyStateCard({
           title: 'Tidak Ada Transaksi',
           description: searchQuery ? 'Tidak ditemukan data transaksi yang sesuai kata kunci pencarian.' : 'Belum ada data transaksi pada kriteria filter ini.',

@@ -19,9 +19,10 @@ import {
   getSeleksi2ExecutionsByDocument,
   getSeleksi3ExecutionsByDocument,
   getSelectionStageLabel,
+  getSelectionCategoryLabel,
   reconcileSelectionPoolWithTransactions
 } from '../selection/selection-manager.js';
-import { syncAllDederanRejectionsToSelectionPool } from '../seeding/dederan-manager.js';
+import { syncAllDederanRejectionsToSelectionPool, getBedenganInspectionSummary } from '../seeding/dederan-manager.js';
 import { getWorkersForUserContext } from '../../data/worker-master.js';
 import { assertAttendanceGateOrThrow } from '../../core/attendance-gate-service.js';
 import { matchActor } from '../../core/transaction-actor.js';
@@ -679,6 +680,12 @@ export function getMantriTodayTransactions(userContext = null, targetDate = null
     const batch = item.batchNo || '-';
     const summary = `${formattedQty} Butir di Bedengan ${bedengan} (Batch: ${batch})`;
 
+    const ditolakQty = parseInt(item.ditolak !== undefined ? item.ditolak : (item.jumlahDitolak || 0), 10) || 0;
+    const alasanDitolak = item.alasanDitolak || item.alasan || '';
+    const ditolakDisplay = ditolakQty > 0
+      ? `${formatSafeNumber(ditolakQty)} Bibit${alasanDitolak && alasanDitolak !== 'Tidak Ada' ? ` (${alasanDitolak})` : ''}`
+      : '0 Bibit';
+
     normalizedList.push({
       id: String(id),
       docNo,
@@ -702,7 +709,8 @@ export function getMantriTodayTransactions(userContext = null, targetDate = null
           { label: 'Bedengan', value: bedengan },
           { label: 'Klon', value: item.klonAwal || item.klon || '-' },
           { label: 'Total Disemai', value: `${formattedQty} Bibit`, highlight: true },
-          { label: 'Total Polybag', value: `${formatSafeNumber(item.totalPolybag || 0)} Pkk` }
+          { label: 'Total Polybag', value: `${formatSafeNumber(item.totalPolybag || 0)} Pkk` },
+          { label: 'Bibit Ditolak', value: ditolakDisplay }
         ]
       }
     });
@@ -1152,13 +1160,91 @@ export function getMantriTodayTransactions(userContext = null, targetDate = null
 
     const docNo = item.docNo || item.selectionNo || item.id || `SEL-${id}`;
     const actor = item.mantri || item.createdByName || item.actorName || user?.name || 'Mantri Bibitan';
-    const layak = item.actualBibitRetainedQty !== undefined ? item.actualBibitRetainedQty : (item.bibitDipertahankan !== undefined ? item.bibitDipertahankan : (item.jumlahLayak || 0));
+    let layak = item.actualBibitRetainedQty !== undefined ? item.actualBibitRetainedQty : (item.bibitDipertahankan !== undefined ? item.bibitDipertahankan : (item.jumlahLayak || 0));
     const afkir = item.actualBibitSelectedQty !== undefined ? item.actualBibitSelectedQty : (item.bibitReject !== undefined ? item.bibitReject : (item.jumlahAfkir || 0));
+
+    const docNoStr = String(docNo).toUpperCase();
+    const isDederan = item.originType === 'REJECT_DEDERAN' || item.sourceModule === 'DEDERAN' || docNoStr.includes('/CULL/DDR/');
+    if (isDederan && Number(layak) === 0) {
+      const allDederIns = storage.get('dederan_inspections', []);
+      const matchingIns = allDederIns.find(i =>
+        (item.sourceTransactionId && (i.id === item.sourceTransactionId || i.docNo === item.sourceTransactionId)) ||
+        (item.sourceDocNo && (i.docNo === item.sourceDocNo || i.dederanTxDocNo === item.sourceDocNo)) ||
+        (item.dederanDocNo && (i.docNo === item.dederanDocNo || i.dederanTxDocNo === item.dederanDocNo)) ||
+        (item.bedenganCode && (i.bedenganCode === item.bedenganCode || i.bedenganId === item.bedenganCode)) ||
+        (item.bedengan && (i.bedenganCode === item.bedengan || i.bedenganId === item.bedengan))
+      );
+      if (matchingIns) {
+        const allDederTxs = storage.get('dederan_transactions', []);
+        const dederTx = allDederTxs.find(t => t.docNo === (matchingIns.dederanTxDocNo || matchingIns.docNo) || t.id === matchingIns.dederanTxId);
+        if (dederTx) {
+          const summary = getBedenganInspectionSummary(dederTx);
+          if (summary && summary.totalBerhasil > 0) layak = summary.totalBerhasil;
+          else if (matchingIns.jumlahBerhasil !== undefined && Number(matchingIns.jumlahBerhasil) > 0) layak = matchingIns.jumlahBerhasil;
+        } else if (matchingIns.jumlahBerhasil !== undefined && Number(matchingIns.jumlahBerhasil) > 0) {
+          layak = matchingIns.jumlahBerhasil;
+        }
+      } else {
+        const allDederTxs = storage.get('dederan_transactions', []);
+        const dederTx = allDederTxs.find(t =>
+          (item.bedenganCode && (t.bedenganCode === item.bedenganCode || t.bedenganId === item.bedenganCode)) ||
+          (item.bedengan && (t.bedenganCode === item.bedengan || t.bedenganId === item.bedengan))
+        );
+        if (dederTx) {
+          const summary = getBedenganInspectionSummary(dederTx);
+          if (summary && summary.totalBerhasil > 0) layak = summary.totalBerhasil;
+        }
+      }
+    }
+
     const formattedLayak = formatSafeNumber(layak);
     const formattedAfkir = formatSafeNumber(afkir);
-    const reason = item.reason || item.kategoriAfkir || item.stage || 'Afkir';
-    const bedengan = item.bedengan || item.lokasi || '-';
     const stageLabel = getSelectionStageLabel(item);
+    const reasonCandidates = [
+      item.alasanDitolakCategory,
+      item.alasanAfkir,
+      item.kategoriAfkir,
+      item.category,
+      item.alasanDetail,
+      item.alasan,
+      item.rejectSourceReference?.reason,
+      item.reason
+    ];
+    const stageLower = String(stageLabel || item.stage || item.selectionStage || '').trim().toLowerCase();
+    const isStageLabel = (val) => {
+      if (!val) return false;
+      const s = String(val).trim().toLowerCase();
+      return s === stageLower ||
+        s.includes('seleksi pra-semai') ||
+        s.includes('seleksi pra-okulasi') ||
+        s.includes('seleksi pasca-okulasi') ||
+        ['seleksi_pra_semai', 'seleksi_1', 'seleksi_i', 'seleksi_2', 'seleksi_ii', 'seleksi_3', 'seleksi_iii', 'seleksi_pasca_okulasi'].includes(s);
+    };
+
+    let reason = '-';
+    let foundCandidate = null;
+    for (const cand of reasonCandidates) {
+      if (!cand) continue;
+      const s = String(cand).trim();
+      if (s && s !== '-' && s.toLowerCase() !== 'tidak ada' && !isStageLabel(s)) {
+        foundCandidate = s;
+        break;
+      }
+    }
+
+    if (foundCandidate) {
+      reason = getSelectionCategoryLabel({ ...item, category: foundCandidate, alasan: foundCandidate }) || foundCandidate;
+    } else {
+      const catLabel = getSelectionCategoryLabel(item);
+      if (catLabel && catLabel !== 'Afkir' && !isStageLabel(catLabel)) {
+        reason = catLabel;
+      } else if (afkir && Number(afkir) > 0) {
+        reason = 'Afkir';
+      } else {
+        reason = '-';
+      }
+    }
+    const bedengan = item.bedengan || item.lokasi || '-';
     const summary = `${stageLabel}: ${formattedLayak} Layak, ${formattedAfkir} Afkir`;
 
     normalizedList.push({
@@ -1183,7 +1269,7 @@ export function getMantriTodayTransactions(userContext = null, targetDate = null
           { label: 'Kategori / Alasan Afkir', value: reason },
           { label: 'Bedengan / Lokasi', value: bedengan },
           { label: 'Bibit Afkir (Selected)', value: `${formattedAfkir} Pkk`, highlight: true },
-          { label: 'Bibit Dipertahankan (Retained)', value: `${formattedLayak} Pkk` }
+          { label: 'Bibit Dipertahankan', value: `${formattedLayak} Pkk` }
         ]
       }
     });

@@ -104,6 +104,7 @@ import { getPendingVerificationCount } from '../verification/verification-manage
 import { getPendingMandoranConsolidationCount, getSavedMandoranConsolidationCount } from '../maintenance/mandoran-consolidation.js';
 import { hasActionableInspection, hasReturnedInspection, hasActionablePreGraftingInspection } from '../inspection/inspection-landing.js';
 import { ASISTEN_BIBITAN_MAIN_MENUS } from '../../core/menu-registry.js';
+import { getActionableBapsbCount } from '../physical-stock-inspection/physical-stock-bapsb-service.js';
 
 export function hasActionablePermintaan(requests, userCtx) {
   if (!requests || !userCtx) return false;
@@ -129,14 +130,16 @@ const PENGURUS_MENU_ITEMS = [
   { id: 'penerimaan', title: 'Penerimaan', icon: ICONS.documentPlus, route: '/reception/kebun-sepupu' },
   { id: 'permintaan-bibit', title: 'Permintaan', icon: ICONS.documentPlus, route: '/request' },
   { id: 'pengeluaran-bibit', title: 'Pengeluaran', icon: ICONS.sprout, route: '/dispatch' },
-  { id: 'pemusnahan-bibit', title: 'Pemusnahan<br>Bibit', icon: ICONS.documentPlus, route: '/destruction' }
+  { id: 'pemusnahan-bibit', title: 'Pemusnahan<br>Bibit', icon: ICONS.documentPlus, route: '/destruction' },
+  { id: 'pemeriksaan-stok', title: 'Pemeriksaan<br>Stok Fisik', icon: ICONS.documentPlus, route: '/inspection/physical-stock' }
 ];
 
 const ASKEP_MENU_ITEMS = [
   { id: 'penerimaan', title: 'Penerimaan', icon: ICONS.documentPlus, route: '/reception/kebun-sepupu' },
   { id: 'permintaan-bibit', title: 'Permintaan', icon: ICONS.documentPlus, route: '/request' },
   { id: 'pengeluaran-bibit', title: 'Pengeluaran', icon: ICONS.sprout, route: '/dispatch' },
-  { id: 'pemusnahan-bibit', title: 'Pemusnahan<br>Bibit', icon: ICONS.documentPlus, route: '/destruction' }
+  { id: 'pemusnahan-bibit', title: 'Pemusnahan<br>Bibit', icon: ICONS.documentPlus, route: '/destruction' },
+  { id: 'pemeriksaan-stok', title: 'Pemeriksaan<br>Stok Fisik', icon: ICONS.documentPlus, route: '/inspection/physical-stock' }
 ];
 
 const ASISTEN_MENU_ITEMS = [
@@ -293,6 +296,7 @@ function renderBerandaAskep() {
   const hasActionableReceipt = hasActionablePenerimaan(allReceipts, allRequests, userCtx);
   const allDestructions = storage.get('destruction_transactions', []);
   const hasActionableDestruction = getActionableDestructionCount(allDestructions, userCtx) > 0;
+  const hasActionableBapsb = getActionableBapsbCount(userCtx) > 0;
   const hasUnseenNotifications = getPengurusNotificationUnreadStatus(allRequests, allReceipts, userCtx);
 
   // Background sync from IndexedDB if available
@@ -325,6 +329,10 @@ function renderBerandaAskep() {
         <div class="beranda-menu-badge-dot notif-dot" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
       `;
     } else if (item.id === 'pemusnahan-bibit' && hasActionableDestruction) {
+      badgeHtml = `
+        <div class="beranda-menu-badge-dot notif-dot" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
+      `;
+    } else if (item.id === 'pemeriksaan-stok' && hasActionableBapsb) {
       badgeHtml = `
         <div class="beranda-menu-badge-dot notif-dot" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
       `;
@@ -506,6 +514,7 @@ function renderBerandaPengurus() {
   const hasActionableReceipt = hasActionablePenerimaan(allReceipts, allRequests, userCtx);
   const allDestructions = storage.get('destruction_transactions', []);
   const hasActionableDestruction = getActionableDestructionCount(allDestructions, userCtx) > 0;
+  const hasActionableBapsb = getActionableBapsbCount(userCtx) > 0;
   const hasUnseenNotifications = getPengurusNotificationUnreadStatus(allRequests, allReceipts, userCtx);
 
   // Background sync from IndexedDB if available
@@ -538,6 +547,10 @@ function renderBerandaPengurus() {
         <div class="beranda-menu-badge-dot notif-dot" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
       `;
     } else if (item.id === 'pemusnahan-bibit' && hasActionableDestruction) {
+      badgeHtml = `
+        <div class="beranda-menu-badge-dot notif-dot" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
+      `;
+    } else if (item.id === 'pemeriksaan-stok' && hasActionableBapsb) {
       badgeHtml = `
         <div class="beranda-menu-badge-dot notif-dot" style="position: absolute; top: 12px; right: 12px; width: 11px; height: 11px; background-color: #D32F2F; border-radius: 50%; box-shadow: 0 0 0 2px #FFFFFF; z-index: 5;"></div>
       `;

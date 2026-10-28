@@ -17,3 +17,17 @@ scratch/
 
 # Office temporary lock files
 ~$*
+
+# Local documentation, audit flows & implementation plans
+Audit_Flow_*
+Audit_Verifikasi_*
+Implementation_Plan_*
+Laporan_*
+docs/PHYSICAL-STOCK-*
+*.docx
+
+# Local test files
+tests/test-batch-transaction-history.js
+tests/test-physical-stock-bapsb.js
+tests/test-physical-stock-inspection.js
+

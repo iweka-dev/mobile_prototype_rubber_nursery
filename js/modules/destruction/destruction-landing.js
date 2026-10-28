@@ -152,7 +152,7 @@ function renderBapbReviewDashboard(app, currentUser) {
   `;
 
   // Attach Event Handlers
-  app.querySelector('#btn-back')?.addEventListener('click', () => navigate('/home'));
+  app.querySelector('#btn-back')?.addEventListener('click', () => navigate('/inspection'));
 
   // Action: Open BAPB Method Selection Modal (ASB only)
   app.querySelector('#btn-create-bapb')?.addEventListener('click', () => {
@@ -1972,7 +1972,7 @@ function renderMantriDestructionLanding(app, currentUser) {
     </div>
   `;
 
-  app.querySelector('#btn-back')?.addEventListener('click', () => navigate('/home'));
+  app.querySelector('#btn-back')?.addEventListener('click', () => navigate('/inspection'));
 
   app.querySelector('#form-destruction')?.addEventListener('submit', (e) => {
     e.preventDefault();

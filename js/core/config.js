@@ -16,4 +16,9 @@ export const CONFIG = {
   
   // Endpoint API (untuk integrasi di fase mendatang)
   API_BASE_URL: '', // Dikosongkan karena saat ini berjalan murni tanpa backend
+
+  // Fitur tambahan dibuat terisolasi agar dapat dinonaktifkan tanpa mengubah flow lama.
+  FEATURES: Object.freeze({
+    PHYSICAL_STOCK_INSPECTION: true
+  })
 };

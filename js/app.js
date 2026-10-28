@@ -38,6 +38,7 @@ import { renderBuddingForm } from './modules/budding/budding-form.js';
 import { renderInspectionLanding } from './modules/inspection/inspection-landing.js';
 import { renderInspectionScan } from './modules/inspection/inspection-scan.js';
 import { renderInspectionForm } from './modules/inspection/inspection-form.js';
+import { renderPhysicalStockInspectionLanding } from './modules/physical-stock-inspection/physical-stock-inspection-landing.js';
 import { renderSelectionLanding } from './modules/selection/selection-landing.js?v=177';
 import { renderNurseryHistory } from './modules/history/nursery-history.js';
 import { renderTransactionManager } from './modules/transactions/transaction-manager.js';
@@ -134,8 +135,17 @@ registerRoute('/budding/regrafting', renderBuddingRegrafting);
 registerRoute('/inspection', renderInspectionLanding);
 registerRoute('/inspection/scan', renderInspectionScan);
 registerRoute('/inspection/form', renderInspectionForm);
+registerRoute('/inspection/physical-stock', renderPhysicalStockInspectionLanding);
 registerRoute('/inspection/dederan/form', renderDederanInspectionForm);
-registerRoute('/selection', renderSelectionLanding);
+registerRoute('/selection', () => {
+  const r = session.getRole ? session.getRole() : session.get()?.role;
+  if (r === 'ASISTEN_BIBITAN') {
+    toast('Pemeriksaan Hasil Seleksi kini disatukan di menu Verifikasi (Single Gate Approval)', 'info');
+    navigate('/verification');
+  } else {
+    renderSelectionLanding();
+  }
+});
 registerRoute('/history', renderNurseryHistory);
 registerRoute('/transactions', renderTransactionManager);
 

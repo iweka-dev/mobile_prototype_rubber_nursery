@@ -230,17 +230,6 @@ export function openDrawer() {
           </div>
         </button>
 
-        ${(isAskep || isPengurus) ? `
-          <button class="drawer-nav-row ${currentPath === '/destruction' ? 'is-active' : ''}" id="menu-pemusnahan-drawer" data-nav-route="/destruction" type="button">
-            <div class="drawer-row-left">
-              <span class="drawer-row-icon">${SVGS.document}</span>
-              <span class="drawer-row-label">Pemusnahan Bibit</span>
-            </div>
-            <div class="drawer-row-right">
-              ${SVGS.chevron}
-            </div>
-          </button>
-        ` : ''}
 
         <button class="drawer-nav-row ${currentPath === '/history' ? 'is-active' : ''}" id="menu-riwayat" data-nav-route="/history" type="button">
           <div class="drawer-row-left">

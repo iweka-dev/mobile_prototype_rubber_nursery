@@ -19,6 +19,7 @@ import { storage } from '../../core/storage.js';
 import { openModal, closeModal } from '../../components/modal.js';
 import { toast } from '../../components/toast.js';
 import { requestRepository, batchRepository } from '../../db/repositories.js';
+import { applyTransactionActor, AUDIT_EVENT_TYPES } from '../../core/transaction-actor.js';
 import { resolveEstate } from '../../data/estate-master.js';
 import { getActiveKlons, resolveKlon } from '../../data/klon-master.js';
 import { getCfnaByCode } from '../../data/cfna-master.js';
@@ -313,14 +314,14 @@ export function getStatusBadge(status) {
   switch (s) {
     case 'MENUNGGU_VERIFIKASI_ASISTEN_KEPALA':
     case 'DIAJUKAN':
-      return { label: 'Menunggu Askep', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' };
+      return { label: 'Menunggu Verifikasi Askep', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' };
     case 'MENUNGGU_VERIFIKASI_PENGURUS':
     case 'MENUNGGU_REVIEW_PENGURUS':
-      return { label: 'Disetujui Askep', color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' };
+      return { label: 'Menunggu Review Pengurus', color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' };
     case 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN':
-      return { label: 'Disetujui Pengurus', color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' };
+      return { label: 'Menunggu Verifikasi ASB', color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' };
     case 'TERVERIFIKASI':
-      return { label: 'Siap Dikeluarkan', color: '#0D9488', bg: '#CCFBF1', border: '#99F6E4' };
+      return { label: 'Siap Pengeluaran', color: '#15803D', bg: '#DCFCE7', border: '#BBF7D0' };
     case 'PENGELUARAN_BERJALAN':
       return { label: 'Pengeluaran Berjalan', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' };
     case 'MENUNGGU_VERIFIKASI_PENGELUARAN':
@@ -396,6 +397,8 @@ export async function renderRequestKebunSendiriLanding() {
       return (
         s === 'MENUNGGU_VERIFIKASI_PENGURUS' ||
         s === 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN' ||
+        s === 'PERLU_REVISI_ASISTEN_KEPALA' ||
+        s === 'PERLU_REVISI_PENGURUS' ||
         s === 'TERVERIFIKASI' ||
         s === 'MENUNGGU_VERIFIKASI_PENGELUARAN' ||
         s === 'MENUNGGU_PENERIMAAN' ||
@@ -484,31 +487,31 @@ export async function renderRequestKebunSendiriLanding() {
     if (canAskep) {
       actionBtnHtml = `
         <button class="btn-action-askep" data-id="${esc(tx.id)}" type="button" style="width: 100%; min-height: 46px; background: #116834; color: #FFFFFF; border: none; font-size: 0.88rem; font-weight: 700; padding: 8px 12px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(17,104,52,0.2);">
-          Review Permintaan (Asisten Kepala)
+          Verifikasi & Teruskan ke Pengurus
         </button>
       `;
     } else if (canPengurus) {
       actionBtnHtml = `
         <button class="btn-action-pengurus" data-id="${esc(tx.id)}" type="button" style="width: 100%; min-height: 46px; background: #116834; color: #FFFFFF; border: none; font-size: 0.88rem; font-weight: 700; padding: 8px 12px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(17,104,52,0.2);">
-          Review Permintaan (Pengurus Kebun)
+          Setujui & Teruskan ke Asisten Bibitan
         </button>
       `;
     } else if (canAsbVerify) {
       actionBtnHtml = `
         <button class="btn-action-asb-verify" data-id="${esc(tx.id)}" type="button" style="width: 100%; min-height: 46px; background: #116834; color: #FFFFFF; font-weight: 700; font-size: 0.88rem; border: none; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(17,104,52,0.2);">
-          Verifikasi dan Proses
+          Verifikasi & Teruskan ke Mantri Bibitan
         </button>
       `;
     } else if (canAsbDispatchVerif) {
       actionBtnHtml = `
         <button class="btn-action-asb-dispatch-verif" data-id="${esc(tx.id)}" type="button" style="width: 100%; min-height: 46px; background: #116834; color: #FFFFFF; font-weight: 700; font-size: 0.88rem; border: none; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(17,104,52,0.2);">
-          Verifikasi Aktual Pengeluaran (Asisten Pembibitan)
+          Verifikasi Pengeluaran & Teruskan ke Asisten Pemohon
         </button>
       `;
     } else if (canRequesterReceipt) {
       actionBtnHtml = `
         <button class="btn-action-requester-receipt" data-id="${esc(tx.id)}" type="button" style="width: 100%; min-height: 46px; background: #116834; color: #FFFFFF; font-weight: 700; font-size: 0.88rem; border: none; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(17,104,52,0.2);">
-          Proses Penerimaan Bibit
+          Konfirmasi Penerimaan Bibit
         </button>
       `;
     }
@@ -545,7 +548,7 @@ export async function renderRequestKebunSendiriLanding() {
         return false;
       }
 
-      const key = `${actor}|${timeKey}|${details.toLowerCase()}`;
+      const key = `${actor}|${String(event?.event || event?.eventType || '').toUpperCase()}|${details.toLowerCase()}`;
       if (seenAuditEvents.has(key)) return false;
       seenAuditEvents.add(key);
       return true;
@@ -1628,6 +1631,47 @@ export async function updateWorkflowStatus(tx, nextStatus, options = {}) {
   const currentUserId = options.actor?.userId || options.actor?.id || options.actor?.code || 'SYSTEM';
   const currentUserName = options.actor?.name || currentUserId;
   const currentUserRole = normalizeRole(options.actor?.role || options.actor?.rawRole || 'USER');
+  const actorLabel = currentUserRole === ROLES.ASKEP || currentUserRole === 'ASISTEN_KEPALA'
+    ? 'Asisten Kepala'
+    : currentUserRole === ROLES.PENGURUS
+      ? 'Pengurus Kebun'
+      : currentUserRole === ROLES.ASISTEN_BIBITAN
+        ? 'Asisten Bibitan'
+        : (options.actor?.position || 'Asisten Pemohon');
+  const rawNote = String(options.note || '').trim();
+  const noteSuffix = rawNote && !/^(disetujui|kebutuhan bibit diverifikasi|pengeluaran aktual diverifikasi|bibit diterima)/i.test(rawNote)
+    ? ` Catatan: ${rawNote}`
+    : '';
+  let auditDetails = rawNote || `Status permintaan diperbarui menjadi ${getStatusBadge(nextStatus).label}.`;
+
+  switch (options.event) {
+    case 'ASKEP_APPROVE':
+      auditDetails = `${actorLabel} (${currentUserName}) memverifikasi permintaan dan meneruskan ke Pengurus Kebun dengan persetujuan ${Number(options.approvedQty || tx.approvedQty || 0).toLocaleString('id-ID')} Pkk (${options.approvedClone || tx.approvedClone || tx.klon || '-'}).${noteSuffix}`;
+      break;
+    case 'ASKEP_REJECT':
+      auditDetails = `${actorLabel} (${currentUserName}) menolak permintaan: ${rawNote.replace(/^Ditolak oleh Askep:\s*/i, '')}`;
+      break;
+    case 'PENGURUS_APPROVE':
+      auditDetails = `${actorLabel} (${currentUserName}) menyetujui kuota ${Number(options.approvedQty || tx.approvedQty || 0).toLocaleString('id-ID')} Pkk (${options.approvedClone || tx.approvedClone || tx.klon || '-'}) dan meneruskan ke Asisten Bibitan.${noteSuffix}`;
+      break;
+    case 'PENGURUS_REJECT':
+      auditDetails = `${actorLabel} (${currentUserName}) menolak permintaan: ${rawNote.replace(/^Ditolak oleh Pengurus:\s*/i, '')}`;
+      break;
+    case 'ASB_RETURN':
+      auditDetails = `${actorLabel} (${currentUserName}) mengembalikan permintaan ke Pengurus Kebun untuk perbaikan: ${rawNote.replace(/^Dikembalikan oleh Asisten Pembibitan:\s*/i, '')}`;
+      break;
+    case 'ASB_VERIFY':
+      auditDetails = `${actorLabel} (${currentUserName}) memverifikasi ketersediaan bibit dan meneruskan permintaan ke Mantri Bibitan untuk pengeluaran.${noteSuffix}`;
+      break;
+    case 'ASB_VERIFY_DISPATCH':
+      auditDetails = `${actorLabel} (${currentUserName}) memverifikasi pengeluaran aktual ${Number(options.dispatchVerification?.verifiedQty || 0).toLocaleString('id-ID')} Pkk dan meneruskan ke Asisten Pemohon.${noteSuffix}`;
+      break;
+    case 'REQUESTER_RECEIPT':
+      auditDetails = `${actorLabel} (${currentUserName}) menyelesaikan penerimaan fisik: ${Number(options.receiptData?.layakQty || 0).toLocaleString('id-ID')} Pkk layak, ${Number(options.receiptData?.rusakQty || 0).toLocaleString('id-ID')} Pkk rusak. Status: Diterima.${noteSuffix}`;
+      break;
+    default:
+      break;
+  }
 
   // Clone record
   const updatedTx = {
@@ -1647,36 +1691,41 @@ export async function updateWorkflowStatus(tx, nextStatus, options = {}) {
   if (options.dispatchData) updatedTx.dispatchData = options.dispatchData;
   if (options.dispatchVerification) updatedTx.dispatchVerification = options.dispatchVerification;
   if (options.receiptData) updatedTx.receiptData = options.receiptData;
+  if (options.event === 'ASKEP_APPROVE') {
+    updatedTx.askepReview = { reviewedBy: currentUserName, reviewedByUserId: currentUserId, reviewedAt: nowISO(), note: rawNote };
+  } else if (options.event === 'PENGURUS_APPROVE') {
+    updatedTx.pengurusApproval = { approvedBy: currentUserName, approvedByUserId: currentUserId, approvedAt: nowISO(), note: rawNote };
+  } else if (options.event === 'ASB_VERIFY') {
+    updatedTx.asbVerification = { verifiedBy: currentUserName, verifiedByUserId: currentUserId, verifiedAt: nowISO(), note: rawNote };
+  }
 
-  // Append audit trail
-  const newAudit = {
-    event: options.event || 'UPDATE_STATUS',
-    actorId: currentUserId,
-    actorName: currentUserName,
-    actorRole: currentUserRole,
-    timestamp: nowISO(),
-    note: options.note || `Status diubah menjadi ${nextStatus}`
-  };
-
-  updatedTx.auditTrail = [...(tx.auditTrail || []), newAudit];
-
-  // Simpan ke storage & IndexedDB
+  // Persist through the repository once so IndexedDB does not append a second
+  // audit event on top of the event already assembled for the UI.
   const list = storage.get('requests_transactions', []);
-  const idx = list.findIndex(r => r.id === tx.id || r.docNo === tx.docNo);
-  if (idx !== -1) {
-    list[idx] = updatedTx;
-  } else {
-    list.unshift(updatedTx);
-  }
-  storage.set('requests_transactions', list);
-
+  const auditEventType = options.event === 'ASKEP_APPROVE' || options.event === 'PENGURUS_APPROVE' || options.event === 'REQUESTER_RECEIPT'
+    ? AUDIT_EVENT_TYPES.APPROVE
+    : options.event === 'ASB_VERIFY'
+      ? AUDIT_EVENT_TYPES.VERIFY
+      : AUDIT_EVENT_TYPES.UPDATE;
   try {
-    await requestRepository.update(tx.id, updatedTx, options.actor);
+    const { auditTrail: _currentAuditTrail, ...patch } = updatedTx;
+    const persisted = await requestRepository.update(tx.id, patch, options.actor, auditEventType, auditDetails);
+    const localIdx = list.findIndex(record => record.id === tx.id || record.docNo === tx.docNo);
+    if (localIdx >= 0) list[localIdx] = persisted;
+    else list.unshift(persisted);
+    storage.set('requests_transactions', list);
+    Object.assign(updatedTx, persisted);
   } catch (err) {
+    const fallbackRecord = applyTransactionActor(updatedTx, auditEventType, options.actor, auditDetails);
+    const localIdx = list.findIndex(record => record.id === tx.id || record.docNo === tx.docNo);
+    if (localIdx >= 0) list[localIdx] = fallbackRecord;
+    else list.unshift(fallbackRecord);
+    storage.set('requests_transactions', list);
     console.warn('[updateWorkflowStatus] IndexedDB update fallback:', err);
+    Object.assign(updatedTx, fallbackRecord);
   }
 
-  toast(`Status transaksi berhasil diperbarui: ${getStatusBadge(nextStatus).label}`, 'success');
+  toast(`Status permintaan diperbarui: ${getStatusBadge(nextStatus).label}`, 'success');
   try {
     if (typeof document !== 'undefined' && document.getElementById('app')) {
       renderRequestKebunSendiriLanding();

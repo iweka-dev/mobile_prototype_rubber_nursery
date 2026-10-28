@@ -697,9 +697,9 @@ export async function processDispatchShipment(parentRequest, formValues, current
   }
 
   const batchSummaryStr = batchDetails.map(b => `${b.batchCode}: ${b.qty.toLocaleString('id-ID')} Pkk`).join(', ');
-  const auditDetails = `Pengeluaran bibit #${shipmentNo} sebanyak ${shipmentQty.toLocaleString('id-ID')} Pkk (${batchSummaryStr}) telah diproses oleh Mantri Bibitan`;
+  const auditDetails = `Mantri Bibitan (${currentUser.name || currentUser.userId || currentUser.id}) mencatat pengeluaran fisik #${shipmentNo}: ${shipmentQty.toLocaleString('id-ID')} Pkk (${batchSummaryStr}). Dokumen penerimaan ${receiptRecord?.receiptDocNo || receiptRecord?.docNo || '-'} otomatis dibuat di Kebun Pemohon. Sisa kuota: ${remainingQty.toLocaleString('id-ID')}`;
 
-  const updatedRequest = applyTransactionActor(
+  let updatedRequest = applyTransactionActor(
     {
       ...req,
       totalIssuedQty: totalIssuedQty,
@@ -725,22 +725,26 @@ export async function processDispatchShipment(parentRequest, formValues, current
     auditDetails
   );
 
-  // Simpan ke storage & IndexedDB
-  const reqIdx = allRequests.findIndex(r => r.id === req.id);
-  if (reqIdx !== -1) {
-    allRequests[reqIdx] = updatedRequest;
-  } else {
-    allRequests.push(updatedRequest);
-  }
-  storage.set('requests_transactions', allRequests);
-
+  // Simpan satu event audit canonical di IndexedDB, lalu samakan salinan UI.
   if (typeof indexedDB !== 'undefined') {
     try {
-      await requestRepository.update(req.id, updatedRequest, currentUser, AUDIT_EVENT_TYPES.UPDATE, auditDetails);
+      const persistedRequest = await requestRepository.update(
+        req.id,
+        { ...updatedRequest, auditTrail: Array.isArray(req.auditTrail) ? req.auditTrail : [] },
+        currentUser,
+        AUDIT_EVENT_TYPES.UPDATE,
+        auditDetails
+      );
+      if (persistedRequest) updatedRequest = persistedRequest;
     } catch (err) {
       console.warn('[dispatch] sync indexeddb warning:', err);
     }
   }
+
+  const reqIdx = allRequests.findIndex(r => r.id === req.id || r.docNo === req.docNo);
+  if (reqIdx !== -1) allRequests[reqIdx] = updatedRequest;
+  else allRequests.push(updatedRequest);
+  storage.set('requests_transactions', allRequests);
 
   return {
     dispatchRecord: newDispatchRecord,

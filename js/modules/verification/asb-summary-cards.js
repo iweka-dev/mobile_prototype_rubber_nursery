@@ -29,6 +29,9 @@ import {
   filterDestructionByScope,
   DESTRUCTION_STORAGE_KEY
 } from '../destruction/destruction-manager.js';
+import {
+  getPhysicalStockActionableCount
+} from '../physical-stock-inspection/physical-stock-inspection-manager.js';
 
 /**
  * Format timestamp terbaru menjadi HH:mm:ss atau null jika tidak ada
@@ -117,35 +120,23 @@ export function getVerifikasiSummary(userCtx) {
  */
 export function getPemeriksaanSummary(userCtx) {
   if (!userCtx) {
-    return { pendingCount: 0, completedCount: 0, totalCount: 0, percentage: 0, lastUpdatedStr: 'Belum ada pembaruan', timeStr: null, pendingSelection: 0, pendingDestruction: 0 };
+    return { pendingCount: 0, completedCount: 0, totalCount: 0, percentage: 0, lastUpdatedStr: 'Belum ada pembaruan', timeStr: null, pendingPhysicalStock: 0, pendingDestruction: 0 };
   }
 
-  const pendingSelection = getActionableSelectionCount(null, userCtx);
+  const pendingPhysicalStock = getPhysicalStockActionableCount(userCtx);
   const pendingDestruction = getActionableDestructionCount(null, userCtx);
-  const pendingCount = pendingSelection + pendingDestruction;
+  const pendingCount = pendingPhysicalStock + pendingDestruction;
 
-  // 1. Hitung Seleksi Selesai (DISETUJUI)
-  const preDocs = getPreGraftingSelectionDocuments({}, userCtx);
-  const approvedPreCount = preDocs.filter(d => (d.status || '').toUpperCase() === 'DISETUJUI').length;
-
-  const allSelRecords = storage.get(SELECTION_STORAGE_KEY, []);
-  const postRecords = allSelRecords.filter(r => {
-    if (r.selectionDocumentId || r.parentSelectionDocumentId) return false;
-    if (r.selectionType === SELECTION_TYPES.PRA_OKULASI) return false;
-    if (r.transactionType && String(r.transactionType).startsWith('PELAKSANAAN_SELEKSI')) return false;
-    const st = String(r.selectionStage || '').toUpperCase();
-    if (st === SELECTION_STAGES.SELEKSI_1 || st === 'SELEKSI_I' || st === SELECTION_STAGES.SELEKSI_2 || st === 'SELEKSI_II' || st === SELECTION_STAGES.SELEKSI_3 || st === 'SELEKSI_III') return false;
-    return true;
-  });
-  const scopedPost = filterSelectionByScope(postRecords, userCtx);
-  const approvedPostCount = scopedPost.filter(d => (d.status || '').toUpperCase() === 'DISETUJUI').length;
+  // 1. Hitung Pemeriksaan Stok Fisik Selesai
+  const allPhysicalStock = storage.get('physical_stock_inspections', []);
+  const completedPhysicalStockCount = allPhysicalStock.filter(d => (d.status || '').toUpperCase() === 'COMPLETED').length;
 
   // 2. Hitung Pemusnahan Selesai (DISETUJUI)
   const allDestructionRecords = storage.get(DESTRUCTION_STORAGE_KEY, []);
   const scopedDestruction = filterDestructionByScope(allDestructionRecords, userCtx);
   const approvedDestructionCount = scopedDestruction.filter(d => (d.status || '').toUpperCase() === 'DISETUJUI').length;
 
-  const completedCount = approvedPreCount + approvedPostCount + approvedDestructionCount;
+  const completedCount = completedPhysicalStockCount + approvedDestructionCount;
   const totalCount = pendingCount + completedCount;
 
   let percentage = 0;
@@ -154,7 +145,7 @@ export function getPemeriksaanSummary(userCtx) {
   }
 
   // Timestamp terbaru
-  const allInspRecords = [...preDocs, ...scopedPost, ...scopedDestruction];
+  const allInspRecords = [...allPhysicalStock, ...scopedDestruction];
   const timeStr = extractLatestTimestamp(allInspRecords);
   const lastUpdatedStr = timeStr ? `Pembaruan Terakhir ${timeStr}` : 'Belum ada pembaruan';
 
@@ -165,7 +156,7 @@ export function getPemeriksaanSummary(userCtx) {
     percentage,
     lastUpdatedStr,
     timeStr,
-    pendingSelection,
+    pendingPhysicalStock,
     pendingDestruction
   };
 }
