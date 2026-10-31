@@ -21,6 +21,8 @@ export const INVENTORY_TX_TYPE = Object.freeze({
   SELECTION: 'SELECTION',
   DESTRUCTION: 'DESTRUCTION',
   PHYSICAL_STOCK_CULL: 'PHYSICAL_STOCK_CULL',
+  PHYSICAL_STOCK_RECONCILIATION_SURPLUS: 'PHYSICAL_STOCK_RECONCILIATION_SURPLUS',
+  PHYSICAL_STOCK_RECONCILIATION_SHORTAGE: 'PHYSICAL_STOCK_RECONCILIATION_SHORTAGE',
   ADJUSTMENT: 'ADJUSTMENT',
   INITIAL: 'INITIAL'
 });
@@ -549,6 +551,178 @@ export function addBatchStockFromReceipt(batchIdOrCode, qty, receiptMetaOrId = n
   _syncLegacyBatchStorage(bId, newAvailable, newReceived, INVENTORY_STATUS.AVAILABLE);
 
   return { ...state, journalId };
+}
+
+/**
+ * Menerapkan rekonsiliasi stok fisik multi-baris pada satu Batch.
+ *
+ * Seluruh baris divalidasi sebelum penyimpanan. Jurnal surplus dan shortage
+ * tetap terpisah (tidak di-netting) tetapi state Batch hanya disimpan sekali.
+ * Pemanggil wajib membungkus fungsi ini dengan executeStockMutationWithLock.
+ */
+export function applyPhysicalStockReconciliation(batchIdOrCode, lines, refMeta = {}, user = null) {
+  if (!batchIdOrCode) throw new Error('Batch rekonsiliasi wajib ditentukan.');
+  if (!Array.isArray(lines) || lines.length === 0) {
+    throw new Error('Minimal satu baris rekonsiliasi wajib tersedia.');
+  }
+
+  const normalizedLines = lines.map((line, index) => {
+    const direction = String(line?.direction || '').trim().toUpperCase();
+    const quantity = Math.abs(Number(line?.quantity ?? line?.difference ?? 0));
+    const lineId = String(line?.lineId || `${index + 1}`).trim();
+    if (!['SURPLUS', 'SHORTAGE'].includes(direction)) {
+      throw new Error(`Arah rekonsiliasi baris ${index + 1} tidak valid.`);
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new Error(`Kuantitas rekonsiliasi baris ${index + 1} harus bilangan bulat lebih dari nol.`);
+    }
+    if (!lineId) throw new Error(`Identitas rekonsiliasi baris ${index + 1} wajib tersedia.`);
+    return {
+      ...line,
+      direction,
+      quantity,
+      lineId,
+      bedenganId: line.bedenganId || null,
+      bedenganCode: line.bedenganCode || line.bedenganId || 'TOTAL_BATCH'
+    };
+  });
+
+  const duplicateLineIds = normalizedLines.filter((line, index, all) =>
+    all.findIndex(candidate => candidate.lineId === line.lineId) !== index
+  );
+  if (duplicateLineIds.length) throw new Error('Identitas baris rekonsiliasi tidak boleh duplikat.');
+
+  const states = _loadInventoryStates();
+  let state = states.find(s => s.batchId === batchIdOrCode || s.batchCode === batchIdOrCode);
+  if (!state) {
+    const masterBatch = _findBatchInMaster(batchIdOrCode);
+    if (!masterBatch) throw new Error(`Batch '${batchIdOrCode}' tidak ditemukan di inventory ledger.`);
+    const bId = masterBatch.id || masterBatch.batchId || masterBatch.batchCode;
+    const bCode = masterBatch.batchCode || masterBatch.batchNo || masterBatch.kode || bId;
+    const availableQty = Number(masterBatch.availableQty ?? masterBatch.currentQty ?? masterBatch.initialQty ?? 0);
+    state = {
+      batchId: bId,
+      batchCode: bCode,
+      initialQty: Number(masterBatch.initialQty || 0),
+      receivedQty: Number(masterBatch.receivedQty || 0),
+      availableQty,
+      status: availableQty > 0 ? INVENTORY_STATUS.AVAILABLE : INVENTORY_STATUS.EMPTY,
+      createdAt: masterBatch.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    states.push(state);
+  }
+
+  if (state.status === INVENTORY_STATUS.INACTIVE) {
+    throw new Error(`Batch '${state.batchCode || state.batchId}' berstatus NONAKTIF dan tidak dapat direkonsiliasi.`);
+  }
+  if (_startupRecoveryError) {
+    throw new Error(`StartupRecoveryBlockedError: Recovery startup gagal (${_startupRecoveryError.message}).`);
+  }
+
+  const journal = _loadInventoryJournal();
+  const refId = refMeta.id || refMeta.docNo || refMeta.reconciliationId;
+  if (!refId) throw new Error('Referensi dokumen rekonsiliasi wajib tersedia.');
+  const userName = typeof user === 'object' && user !== null
+    ? (user.name || user.fullName || user.userId || user.username || 'SYSTEM')
+    : (user || 'SYSTEM');
+  const batchJournal = journal.filter(entry => entry.batchId === state.batchId || entry.batchCode === state.batchCode);
+  let nextSeq = batchJournal.reduce((max, entry) => Math.max(max, Number(entry.batchSeq || 0)), 0) + 1;
+  let runningBalance = Number(state.availableQty || 0);
+  const createdEntries = [];
+  const existingEntries = [];
+
+  // Surplus diproses lebih dahulu agar urutan balance jurnal tidak pernah negatif,
+  // sementara setiap baris tetap dicatat sebagai mutasi terpisah.
+  const orderedLines = [...normalizedLines].sort((a, b) => {
+    if (a.direction === b.direction) return 0;
+    return a.direction === 'SURPLUS' ? -1 : 1;
+  });
+
+  for (const line of orderedLines) {
+    const txType = line.direction === 'SURPLUS'
+      ? INVENTORY_TX_TYPE.PHYSICAL_STOCK_RECONCILIATION_SURPLUS
+      : INVENTORY_TX_TYPE.PHYSICAL_STOCK_RECONCILIATION_SHORTAGE;
+    const idempotencyKey = `MUT-${state.batchId}-PSR-${refId}-${line.lineId}`;
+    const duplicate = batchJournal.find(entry => entry.idempotencyKey === idempotencyKey);
+    if (duplicate) {
+      const expectedIn = line.direction === 'SURPLUS' ? line.quantity : 0;
+      const expectedOut = line.direction === 'SHORTAGE' ? line.quantity : 0;
+      if (duplicate.txType !== txType || Number(duplicate.qtyIn || 0) !== expectedIn || Number(duplicate.qtyOut || 0) !== expectedOut) {
+        throw new Error(`StockIntegrityBreachError: IdempotencyKey '${idempotencyKey}' terdeteksi dengan payload berbeda.`);
+      }
+      existingEntries.push(duplicate);
+      continue;
+    }
+
+    runningBalance += line.direction === 'SURPLUS' ? line.quantity : -line.quantity;
+    if (runningBalance < 0) {
+      throw new Error(`Stok Batch '${state.batchCode || state.batchId}' tidak mencukupi untuk rekonsiliasi shortage.`);
+    }
+    const now = new Date().toISOString();
+    const entry = {
+      id: `JRN-${state.batchId}-${nextSeq}`,
+      batchId: state.batchId,
+      batchCode: state.batchCode || state.batchId,
+      batchSeq: nextSeq,
+      idempotencyKey,
+      txType,
+      qtyIn: line.direction === 'SURPLUS' ? line.quantity : 0,
+      qtyOut: line.direction === 'SHORTAGE' ? line.quantity : 0,
+      balance: runningBalance,
+      refId,
+      reconciliationId: refMeta.reconciliationId || refId,
+      inspectionId: refMeta.inspectionId || null,
+      lineId: line.lineId,
+      bedenganId: line.bedenganId,
+      bedenganCode: line.bedenganCode,
+      reason: line.reason || '',
+      notes: line.notes || `Rekonsiliasi stok fisik ${refMeta.docNo || refId}`,
+      createdAt: now,
+      createdBy: userName
+    };
+    journal.push(entry);
+    createdEntries.push(entry);
+    nextSeq += 1;
+  }
+
+  if (!createdEntries.length) {
+    return {
+      ...state,
+      idempotentSkipped: true,
+      journalIds: existingEntries.map(entry => entry.id),
+      journalEntries: existingEntries.map(entry => ({ ...entry }))
+    };
+  }
+
+  const previousState = { ...state };
+  state.availableQty = runningBalance;
+  state.status = runningBalance > 0 ? INVENTORY_STATUS.AVAILABLE : INVENTORY_STATUS.EMPTY;
+  state.updatedAt = new Date().toISOString();
+
+  try {
+    _saveInventoryJournal(journal);
+    _saveInventoryStates(states);
+  } catch (error) {
+    try {
+      const rollbackJournal = _loadInventoryJournal().filter(entry => !createdEntries.some(created => created.id === entry.id));
+      _saveInventoryJournal(rollbackJournal);
+      Object.assign(state, previousState);
+      _saveInventoryStates(states);
+    } catch (_) {
+      // Startup recovery akan mendeteksi intent/jurnal parsial secara fail-closed.
+    }
+    throw error;
+  }
+
+  _syncLegacyBatchStorage(state.batchId, runningBalance, state.receivedQty, state.status);
+  const allEntries = [...existingEntries, ...createdEntries];
+  return {
+    ...state,
+    idempotentSkipped: createdEntries.length === 0,
+    journalIds: allEntries.map(entry => entry.id),
+    journalEntries: allEntries.map(entry => ({ ...entry }))
+  };
 }
 
 /**

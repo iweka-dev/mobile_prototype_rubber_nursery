@@ -408,6 +408,29 @@ const allCompletedAfterTx2 = scopeListAfterTx2.every(b => b.remainingPolybag ===
 
 assert(allCompletedAfterTx2 === true, 'All bedengans in document are confirmed completed; triggers modal auto-close');
 
+const transactionCountAtCompletion = storage.get('selection_transactions', []).length;
+let duplicateCompletionRejected = false;
+try {
+  createSeleksi1ExecutionTransaction({
+    selectionDocumentId: flowDoc.id,
+    selectionDocNo: flowDoc.docNo,
+    bedenganCode: 'BED-002',
+    actualPolybagInspectedQty: 300,
+    actualBibitSelectedQty: 5,
+    actualBibitRetainedQty: 580,
+    photo: { dataUrl: 'data:image/jpeg;base64,mock-duplicate', latitude: '3.12', longitude: '99.12' },
+    requirePhoto: true
+  }, mockUser);
+} catch (err) {
+  duplicateCompletionRejected = /100%|telah selesai/i.test(String(err?.message || err));
+}
+
+assert(duplicateCompletionRejected, 'Duplicate transaction is rejected after Seleksi I reaches 100%');
+assert(
+  storage.get('selection_transactions', []).length === transactionCountAtCompletion,
+  'Rejected duplicate does not add a new selection transaction'
+);
+
 // ---------------------------------------------------------------------------
 // TEST 6: Seleksi II & III Form & Calculator Compatibility
 // ---------------------------------------------------------------------------

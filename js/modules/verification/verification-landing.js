@@ -760,13 +760,13 @@ function renderTransactionDetailView(app, userCtx) {
           </div>
         ` : `
           <div style="display: flex; gap: 10px; margin-top: 10px; padding-bottom: 10px;">
-            ${selectedTxItem.referenceType !== 'TIDAK_HADIR' ? `
+            ${!['TIDAK_HADIR', 'PHYSICAL_STOCK_RECONCILIATION'].includes(selectedTxItem.referenceType) ? `
               <button id="btn-tx-return" type="button" style="flex: 1; height: 42px; background: #FFFFFF; border: 1.5px solid #EF4444; color: #DC2626; border-radius: 8px; font-size: 0.82rem; font-weight: 700; cursor: pointer;">
                 Kembalikan
               </button>
             ` : ''}
             <button id="btn-tx-approve" type="button" style="flex: 1; height: 42px; background: #116834; color: #FFFFFF; border: none; border-radius: 8px; font-size: 0.82rem; font-weight: 700; cursor: pointer; box-shadow: 0 2px 4px rgba(17,104,52,0.2);">
-              Setujui
+              ${selectedTxItem.referenceType === 'PHYSICAL_STOCK_RECONCILIATION' ? 'Terapkan Rekonsiliasi' : 'Setujui'}
             </button>
           </div>
         `))}
@@ -805,7 +805,9 @@ function renderTransactionDetailView(app, userCtx) {
         referenceId: selectedTxItem.referenceId,
         currentUser: userCtx
       });
-      toast(`Dokumen ${docNo} berhasil disetujui`, 'success');
+      toast(selectedTxItem.referenceType === 'PHYSICAL_STOCK_RECONCILIATION'
+        ? `Rekonsiliasi ${docNo} berhasil diterapkan ke Inventory Ledger`
+        : `Dokumen ${docNo} berhasil disetujui`, 'success');
       currentVerifView = 'TRANSACTION_LIST';
       renderVerificationLanding();
     } catch (err) {

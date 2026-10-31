@@ -627,6 +627,14 @@ export function getEligibleSelectionDocsForBapb(currentUser = null) {
       const isApproved = st === 'DISETUJUI' || st === 'APPROVED' || st === 'VERIFIED' || st === 'TERVERIFIKASI' || tx.isApproved === true || tx.isFinal === true;
       if (!isApproved) continue;
 
+      // Afkir dari Pemeriksaan Stok Fisik baru boleh menjadi sumber BAPB
+      // setelah BA Rekonsiliasi diterapkan dan jurnal pengurangan tersedia.
+      if (tx.approvalSource === 'PHYSICAL_STOCK_RECONCILIATION' || tx.physicalStockReconciliationId) {
+        const hasAppliedMutation = tx.stockMutationStatus === 'APPLIED';
+        const hasJournal = Boolean(tx.inventoryJournalId) || (Array.isArray(tx.inventoryJournalIds) && tx.inventoryJournalIds.length > 0);
+        if (!hasAppliedMutation || !hasJournal) continue;
+      }
+
       let qty = 0;
       try {
         qty = parseStrictCanonicalQuantity(

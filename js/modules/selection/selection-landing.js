@@ -84,6 +84,8 @@ import {
   calculateEligibleSeedingTotalsForBedengan,
   syncAllSeedingsToPreGraftingSelectionDocuments,
   syncAllApprovedPreGraftingSelectionDocuments,
+  isSelectionDocumentFinal,
+  selectionDocumentRequiresCorrection,
   getSeleksi1ExecutionsByDocument,
   getBedenganScopeStatusForSeleksi1,
   validateSeleksi1Execution,
@@ -1289,7 +1291,17 @@ export function calculateBatchMetrics(batchGroup, stage = 'SELEKSI_1') {
       // Fallback: document metrics if no child txs
       const primaryDoc = bed.docs[0];
       if (primaryDoc) {
-        const insPoly = parseInt(primaryDoc.actualPolybagInspectedQty !== undefined ? primaryDoc.actualPolybagInspectedQty : (primaryDoc.inspectedQty || 0), 10);
+        const finalFallback = isSelectionDocumentFinal(primaryDoc) && primaryDoc.isCompleted ? bed.sourcePoly : 0;
+        const insPoly = parseInt(
+          primaryDoc.actualPolybagInspectedQty !== undefined
+            ? primaryDoc.actualPolybagInspectedQty
+            : (primaryDoc.totalPolybagDiperiksa !== undefined
+                ? primaryDoc.totalPolybagDiperiksa
+                : (primaryDoc.totalDiperiksa !== undefined
+                    ? primaryDoc.totalDiperiksa
+                    : (primaryDoc.inspectedQty || finalFallback))),
+          10
+        );
         const selBibit = parseInt(primaryDoc.actualBibitSelectedQty !== undefined ? primaryDoc.actualBibitSelectedQty : (primaryDoc.selectedBibitQty || primaryDoc.totalAfkir || 0), 10);
         totalInspectedPolybag += insPoly;
         totalBibitSelected += selBibit;
@@ -1462,6 +1474,7 @@ export function renderProgramBatchCompactView({
     let progressTextColor = '#64748B';
 
     if (stage === 'SELEKSI_1' || stage === 'SELEKSI_I') {
+      const hasCorrection = (batch.docs || []).some(selectionDocumentRequiresCorrection);
       const isPreDone = (metrics.inspectedPercent >= 100 && metrics.totalInspectedPolybag > 0) || (batch.docs || []).some(d => (d.isCompleted || d.status === 'COMPLETED') && (d.totalLayak !== undefined || (d.inspectedPolybag !== undefined && d.inspectedPolybag > 0)));
       const isSubmitted = (batch.docs || []).some(d => {
         const st = String(d.status || '').toUpperCase();
@@ -1474,7 +1487,15 @@ export function renderProgramBatchCompactView({
         return ((st === 'DISETUJUI' || st === 'VERIFIED' || st === 'TERVERIFIKASI' || vst === 'TERVERIFIKASI' || vst === 'DISETUJUI') && d.isFinal);
       });
 
-      if (metrics.totalSourcePolybag === 0 && metrics.totalSourceBibit === 0) {
+      if (hasCorrection) {
+        isBatchLocked = false;
+        badgeText = 'Perlu Koreksi';
+        badgeBg = '#FEF2F2';
+        badgeColor = '#B91C1C';
+        badgeBorder = '#FECACA';
+        progressText = `Periksa ${metrics.inspectedPercent}% · Perbaiki transaksi yang dikembalikan`;
+        progressTextColor = '#B91C1C';
+      } else if (metrics.totalSourcePolybag === 0 && metrics.totalSourceBibit === 0) {
         badgeText = 'Populasi Belum Terkonfigurasi';
         badgeBg = '#FEF2F2';
         badgeColor = '#991B1B';
@@ -1482,6 +1503,7 @@ export function renderProgramBatchCompactView({
         progressText = 'Data populasi sumber belum valid atau 0';
         progressTextColor = '#991B1B';
       } else if (isPreDone && isAllDocsApproved) {
+        isBatchLocked = true;
         badgeText = 'Selesai Diseleksi';
         badgeBg = '#DCFCE7';
         badgeColor = '#15803D';
@@ -1556,6 +1578,7 @@ export function renderProgramBatchCompactView({
         }
       }
     } else {
+      const hasCorrection = (batch.docs || []).some(selectionDocumentRequiresCorrection);
       const isPreDone = (metrics.inspectedPercent >= 100 && metrics.totalInspectedPolybag > 0) || (batch.docs || []).some(d => (d.isCompleted || d.status === 'COMPLETED') && (d.totalLayak !== undefined || (d.inspectedPolybag !== undefined && d.inspectedPolybag > 0)));
       const isSubmitted = (batch.docs || []).some(d => {
         const st = String(d.status || '').toUpperCase();
@@ -1568,7 +1591,13 @@ export function renderProgramBatchCompactView({
         return ((st === 'DISETUJUI' || st === 'VERIFIED' || st === 'TERVERIFIKASI' || vst === 'TERVERIFIKASI' || vst === 'DISETUJUI') && d.isFinal);
       });
 
-      if (metrics.totalSourcePolybag === 0 && metrics.totalSourceBibit === 0) {
+      if (hasCorrection) {
+        isBatchLocked = false;
+        badgeText = 'Perlu Koreksi';
+        badgeBg = '#FEF2F2';
+        badgeColor = '#B91C1C';
+        badgeBorder = '#FECACA';
+      } else if (metrics.totalSourcePolybag === 0 && metrics.totalSourceBibit === 0) {
         badgeText = 'Populasi Belum Terkonfigurasi';
         badgeBg = '#FEF2F2';
         badgeColor = '#991B1B';
@@ -1576,6 +1605,7 @@ export function renderProgramBatchCompactView({
         progressText = 'Data populasi sumber belum valid atau 0';
         progressTextColor = '#991B1B';
       } else if (isPreDone && isAllDocsApproved) {
+        isBatchLocked = true;
         badgeText = 'Selesai Diseleksi';
         badgeBg = '#DCFCE7';
         badgeColor = '#15803D';
@@ -2267,6 +2297,16 @@ export function handleBatchRowClick({ stage, programCode, batchCode, user, onSav
   }
 
   const openExecution = (targetDoc, bedCode = null) => {
+    if (isSelectionDocumentFinal(targetDoc) && !selectionDocumentRequiresCorrection(targetDoc)) {
+      const stageNorm = String(stage || targetDoc.selectionStage || '').toUpperCase();
+      const nextLabel = (stageNorm === 'SELEKSI_1' || stageNorm === 'SELEKSI_I')
+        ? ' Silakan lanjutkan melalui sub-tab Seleksi II.'
+        : ((stageNorm === 'SELEKSI_2' || stageNorm === 'SELEKSI_II')
+            ? ' Silakan lanjutkan melalui sub-tab Seleksi III.'
+            : '');
+      toast(`Dokumen ${targetDoc.docNo || ''} telah disetujui final dan terkunci.${nextLabel}`, 'info');
+      return;
+    }
     if (stage === 'SELEKSI_1' || stage === 'SELEKSI_I') {
       // VALIDASI GERBANG ASB: Cegah form input jika SOW / CULL belum disetujui ASB
       const gateCheck = canPerformPreGraftingSelection1(targetDoc, bedCode);
@@ -2595,20 +2635,19 @@ export function renderGlobalChildTransactionsSection(txs = [], docs = [], stage 
     );
     const canDeleteTx = !isTxApprovedOrFinal && !isParentApprovedOrSubmitted;
 
+    // Status pada kartu transaksi harus merepresentasikan lifecycle transaksi
+    // itu sendiri. Status final parent ditampilkan pada kartu Batch, bukan
+    // diwariskan ke sebagian child sehingga label dalam satu daftar bercampur.
     let statusBadgeHtml = '';
-    if ((pStatus === SELECTION_STATUS.DISETUJUI || pStatus === 'DISETUJUI' || txStatus === 'DISETUJUI') && (isFinal || tx.isFinal || pVerifStatus === 'TERVERIFIKASI' || txVerifStatus === 'TERVERIFIKASI')) {
+    if (isTxApprovedOrFinal) {
       statusBadgeHtml = `
                 <span style="font-size: 0.65rem; font-weight: 700; color: #15803D; background: #F0FDF4; border: 1px solid #BBF7D0; padding: 2px 6px; border-radius: 4px;">
-                  Disetujui Final
+                  Disetujui
                 </span>
               `;
     } else if (
-      pStatus === SELECTION_STATUS.DIKEMBALIKAN ||
-      pStatus === 'DIKEMBALIKAN' ||
-      pVerifStatus === 'DIKEMBALIKAN' ||
       txStatus === 'DIKEMBALIKAN' ||
       txVerifStatus === 'DIKEMBALIKAN' ||
-      Boolean(parentDoc.returnReason) ||
       Boolean(tx.returnReason)
     ) {
       statusBadgeHtml = `
@@ -2617,34 +2656,21 @@ export function renderGlobalChildTransactionsSection(txs = [], docs = [], stage 
                 </span>
               `;
     } else if (
-      pStatus === SELECTION_STATUS.MENUNGGU_VERIFIKASI ||
-      pStatus === 'MENUNGGU_VERIFIKASI' ||
-      pStatus === 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN' ||
-      pStatus === 'DIAJUKAN' ||
-      pVerifStatus === 'MENUNGGU_VERIFIKASI' ||
+      txStatus === SELECTION_STATUS.MENUNGGU_VERIFIKASI ||
+      txStatus === 'MENUNGGU_VERIFIKASI' ||
+      txStatus === 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN' ||
+      txStatus === 'DIAJUKAN' ||
       txVerifStatus === 'MENUNGGU_VERIFIKASI'
     ) {
       statusBadgeHtml = `
                 <span style="font-size: 0.65rem; font-weight: 700; color: #D97706; background: #FFFBEB; border: 1px solid #FDE68A; padding: 2px 6px; border-radius: 4px;">
-                  Menunggu Asisten
-                </span>
-              `;
-    } else if (pStatus === 'COMPLETED' || isCompleted) {
-      statusBadgeHtml = `
-                <span style="font-size: 0.65rem; font-weight: 700; color: #2563EB; background: #EFF6FF; border: 1px solid #BFDBFE; padding: 2px 6px; border-radius: 4px;">
-                  Siap Konfirmasi Mantri
-                </span>
-              `;
-    } else if (pStatus === 'IN_PROGRESS' || tx.status === 'RECORDED') {
-      statusBadgeHtml = `
-                <span style="font-size: 0.65rem; font-weight: 700; color: #475569; background: #F1F5F9; border: 1px solid #CBD5E1; padding: 2px 6px; border-radius: 4px;">
-                  Tercatat Parsial
+                  Menunggu Verifikasi
                 </span>
               `;
     } else {
       statusBadgeHtml = `
-                <span style="font-size: 0.65rem; font-weight: 700; color: #64748B; background: #F8FAFC; border: 1px solid #E2E8F0; padding: 2px 6px; border-radius: 4px;">
-                  Tercatat
+                <span style="font-size: 0.65rem; font-weight: 700; color: #D97706; background: #FFFBEB; border: 1px solid #FDE68A; padding: 2px 6px; border-radius: 4px;">
+                  Menunggu Verifikasi
                 </span>
               `;
     }
@@ -4879,6 +4905,10 @@ function renderAfkirPoolList(poolItems, culledItems, emptyTitle, emptyDesc, pool
 export function openSeleksi1ExecutionModal({ doc, bedenganCode = null, user, onSaved }) {
   const today = getEffectiveTodayDDMMYYYY();
   let currentDoc = doc;
+  if (isSelectionDocumentFinal(currentDoc) && !selectionDocumentRequiresCorrection(currentDoc)) {
+    toast('Seleksi I telah disetujui final dan terkunci. Silakan lanjutkan melalui sub-tab Seleksi II.', 'info');
+    return;
+  }
   let currentBedScopeList = getBedenganScopeStatusForSeleksi1(currentDoc);
 
   // Dapatkan transaksi fisik aktual Seleksi 1
@@ -5403,6 +5433,12 @@ export function openSeleksi1ExecutionModal({ doc, bedenganCode = null, user, onS
       return;
     }
 
+    if (matchedBed.remainingPolybag <= 0 || matchedBed.isFullyInspected) {
+      applySelectedBedengan('');
+      toast(`Bedengan ${formatBedenganDisplayCode(matchedBed.bedenganCode || matchedBed.bedenganId)} telah selesai diperiksa (100%).`, 'info');
+      return;
+    }
+
     const prevBed = currentBedenganDisplay;
     currentBedenganDisplay = formatBedenganDisplayCode(matchedBed.bedenganCode || matchedBed.bedenganId);
     currentBedenganId = matchedBed.bedenganId || matchedBed.bedenganCode || currentBedenganDisplay;
@@ -5696,6 +5732,55 @@ export function openSeleksi1ExecutionModal({ doc, bedenganCode = null, user, onS
     const inspectedPoly = Number(rawPolyStr);
     const selectedBibit = Number(rawBibitStr);
 
+    // PRE-SAVE FRESHNESS GUARD:
+    // Form dapat tetap terbuka setelah render halaman induk. Selalu baca ulang
+    // dokumen dan scope Bedengan dari storage sebelum memvalidasi transaksi.
+    const latestDoc = getPreGraftingSelectionDocumentById(currentDoc.id || currentDoc.docNo) || currentDoc;
+    const latestBedScopeList = getBedenganScopeStatusForSeleksi1(latestDoc);
+    const latestBed = latestBedScopeList.find(b =>
+      formatBedenganDisplayCode(b.bedenganCode || b.bedenganId).toUpperCase() === currentBedenganDisplay.toUpperCase()
+    );
+    const latestExecutions = getSeleksi1ExecutionsByDocument(latestDoc.id || latestDoc.docNo);
+    const latestSourcePolybag = parseInt(latestDoc.sourcePolybagQty || 0, 10);
+    const latestInspectedPolybag = latestExecutions.reduce((sum, tx) => {
+      const qty = parseInt(
+        tx.actualPolybagInspectedQty !== undefined
+          ? tx.actualPolybagInspectedQty
+          : (tx.polybagScope !== undefined
+              ? tx.polybagScope
+              : (tx.actualPolybagActiveQty !== undefined
+                  ? tx.actualPolybagActiveQty
+                  : (tx.initialPolybagCount || 0))),
+        10
+      );
+      return sum + (Number.isFinite(qty) ? qty : 0);
+    }, 0);
+
+    const isDocumentComplete = latestExecutions.length > 0 &&
+      latestSourcePolybag > 0 &&
+      latestInspectedPolybag >= latestSourcePolybag;
+    const isBedComplete = !latestBed || latestBed.remainingPolybag <= 0 || latestBed.isFullyInspected;
+
+    if (isDocumentComplete || isBedComplete) {
+      toast(
+        isDocumentComplete
+          ? 'Pemeriksaan Seleksi I telah mencapai 100%. Tidak dapat menambah transaksi baru.'
+          : `Bedengan ${currentBedenganDisplay} telah selesai diperiksa (100%).`,
+        'info'
+      );
+      closeModal();
+      if (onSaved) onSaved();
+      return;
+    }
+
+    currentDoc = latestDoc;
+    currentBedScopeList = latestBedScopeList;
+    currentRemainingPolybag = latestBed.remainingPolybag;
+    currentInitialPolybag = latestBed.initialPolybag;
+    currentSourceBibit = latestBed.initialBibit;
+    existingPolyInspected = latestBed.inspectedPolybag || 0;
+    existingBibitSelected = latestBed.rejectedBibit || 0;
+
     if (isNaN(inspectedPoly) || !Number.isInteger(inspectedPoly) || inspectedPoly < 0 || inspectedPoly > currentRemainingPolybag) {
       updateCalculations();
       toast('Periksa kembali input jumlah polybag diperiksa.', 'error');
@@ -5753,16 +5838,17 @@ export function openSeleksi1ExecutionModal({ doc, bedenganCode = null, user, onS
 
       currentClientRequestId = null;
       toast(`Transaksi Seleksi I (${res.transaction.docNo}) pada ${currentBedenganDisplay} berhasil dicatat. (${res.transaction.actualPolybagInspectedQty} Polybag, ${res.transaction.actualBibitSelectedQty} Bibit Diseleksi)`, 'success');
-      if (onSaved) onSaved(res);
 
-      // Verify scope completion on refreshed document
-      const freshDoc = getPreGraftingSelectionDocumentById(currentDoc.id) || currentDoc;
+      // Verifikasi completion dari hasil layanan terlebih dahulu. Callback render
+      // halaman induk dijalankan setelah state modal sudah diputuskan.
+      const freshDoc = res.parentDocument || getPreGraftingSelectionDocumentById(currentDoc.id) || currentDoc;
       const freshBedScopeList = getBedenganScopeStatusForSeleksi1(freshDoc);
       const isAllCompleted = freshBedScopeList.length > 0 && freshBedScopeList.every(b => b.remainingPolybag === 0);
 
       if (isAllCompleted) {
         toast('Seluruh bedengan pada dokumen ini telah selesai diperiksa.', 'success');
         closeModal();
+        if (onSaved) onSaved(res);
         return;
       }
 
@@ -5777,6 +5863,7 @@ export function openSeleksi1ExecutionModal({ doc, bedenganCode = null, user, onS
       saveBtn.textContent = 'Simpan Transaksi';
       saveBtn.style.opacity = '0.5';
 
+      if (onSaved) onSaved(res);
       toast('Form telah di-reset. Silakan pilih bedengan berikutnya untuk melanjutkan input.', 'info');
     } catch (err) {
       console.error('[Seleksi 1 Save Error]', err);
@@ -5797,6 +5884,10 @@ export function openSeleksi1ExecutionModal({ doc, bedenganCode = null, user, onS
 export function openSeleksi2ExecutionModal({ doc, bedenganCode = null, user, onSaved }) {
   const today = getEffectiveTodayDDMMYYYY();
   let currentDoc = doc;
+  if (isSelectionDocumentFinal(currentDoc) && !selectionDocumentRequiresCorrection(currentDoc)) {
+    toast('Seleksi II telah disetujui final dan terkunci. Silakan lanjutkan melalui sub-tab Seleksi III.', 'info');
+    return;
+  }
   if (currentDoc?.sourceChangePending) {
     toast('Pemeriksaan ditahan. Saldo sumber Seleksi I berubah; dokumen ini perlu direkonsiliasi terlebih dahulu.', 'warning');
     return;
@@ -6718,6 +6809,10 @@ export function openSeleksi2ExecutionModal({ doc, bedenganCode = null, user, onS
 export function openSeleksi3ExecutionModal({ doc, bedenganCode = null, user, onSaved }) {
   const today = getEffectiveTodayDDMMYYYY();
   let currentDoc = doc;
+  if (isSelectionDocumentFinal(currentDoc) && !selectionDocumentRequiresCorrection(currentDoc)) {
+    toast('Seleksi III telah disetujui final dan terkunci.', 'info');
+    return;
+  }
   let currentBedScopeList = getBedenganScopeStatusForSeleksi3(currentDoc);
 
   // Dapatkan transaksi fisik aktual Seleksi III

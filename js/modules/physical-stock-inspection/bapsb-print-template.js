@@ -7,7 +7,7 @@
  * - Kop Resmi PT Socfin Indonesia
  * - Tiga Tanda Tangan Berjenjang: ASB (Pelaksana), Askep (Verifikator), Pengurus (Mengesahkan)
  * - Retensi Penuh Audit Trail (Seluruh putaran hitung ditampilkan di dokumen)
- * - Isolasi Stok Sistem: Menampilkan Stok Buku vs Fisik vs Stok Lebih Tersendiri
+ * - Rekonsiliasi: Menampilkan selisih lebih dan kurang per Bedengan
  */
 
 import { formatDate, formatDateTime, esc } from '../../core/utils.js';
@@ -20,7 +20,11 @@ export function renderBapsbPrintHtml(doc, options = {}) {
 
   const isScreenPreview = options?.isScreenPreview === true;
   const isFinalDoc = Boolean(doc.isFinal || doc.status === BAPSB_STATUS.FINAL);
-  const statusDisplay = isFinalDoc ? 'STATUS: Telah Disetujui' : 'STATUS: DRAF PERSETUJUAN';
+  const statusDisplay = doc.status === BAPSB_STATUS.APPLIED
+    ? 'STATUS: Rekonsiliasi Diterapkan'
+    : doc.status === BAPSB_STATUS.FINAL_PENDING_APPLICATION
+      ? 'STATUS: Final — Menunggu Penerapan'
+      : isFinalDoc ? 'STATUS: Telah Disetujui' : 'STATUS: DRAF PERSETUJUAN';
 
   const cleanEstateName = (doc.estateName || 'Tanah Besih').replace(/^Kebun\s+/i, '');
   const cleanDivisionName = doc.divisionName || 'Divisi I';
@@ -71,7 +75,7 @@ export function renderBapsbPrintHtml(doc, options = {}) {
           BERITA ACARA
         </div>
         <h1 style="font-size:11.5pt;font-weight:800;text-transform:uppercase;margin:0;color:#0F172A;letter-spacing:0.02em">
-          PEMERIKSAAN STOK FISIK BIBIT KARET
+          REKONSILIASI STOK FISIK BIBIT
         </h1>
         <div style="font-size:8pt;font-weight:700;color:#334155;margin-top:5px">
           ${esc(estateDivisionLine)}
@@ -83,7 +87,7 @@ export function renderBapsbPrintHtml(doc, options = {}) {
 
       <!-- PARAGRAF PEMBUKA -->
       <div style="font-size:7.2pt;color:#334155;margin-bottom:10px;text-align:justify;line-height:1.45">
-        Pada hari ini telah dilaksanakan sensus dan pemeriksaan fisik bibit karet di lokasi pembibitan kebun. Berdasarkan penghitungan fisik lapangan secara berulang dan terverifikasi, ditemukan selisih lebih fisik terhadap catatan saldo sistem. Dokumen Berita Acara ini diterbitkan sebagai pertanggungjawaban fisik resmi dan dasar pencatatan stok cadangan terpisah.
+        Pada hari ini telah dilaksanakan pemeriksaan stok fisik bibit di lokasi pembibitan kebun. Dokumen ini mencatat selisih fisik per Bedengan dan menjadi dasar penerapan rekonsiliasi setelah memperoleh persetujuan Asisten Kepala serta pengesahan Pengurus.
       </div>
 
       <!-- METADATA DOKUMEN -->
@@ -126,25 +130,47 @@ export function renderBapsbPrintHtml(doc, options = {}) {
         <table style="width:100%;border-collapse:collapse;font-size:7.2pt;text-align:center;border:1px solid #CBD5E1">
           <thead>
             <tr style="background:#F1F5F9;font-weight:800;color:#1E293B">
-              <th style="border:1px solid #CBD5E1;padding:5px 6px">Stok Buku Sistem (ERP)</th>
+              <th style="border:1px solid #CBD5E1;padding:5px 6px">Stok Buku Sistem</th>
               <th style="border:1px solid #CBD5E1;padding:5px 6px">Hasil Sensus Fisik</th>
-              <th style="border:1px solid #CBD5E1;padding:5px 6px">Selisih Fisik</th>
-              <th style="border:1px solid #CBD5E1;padding:5px 6px;background:#FEF3C7;color:#92400E">Stok Lebih Tersendiri (Cadangan)</th>
+              <th style="border:1px solid #CBD5E1;padding:5px 6px;color:#047857">Total Lebih</th>
+              <th style="border:1px solid #CBD5E1;padding:5px 6px;color:#B91C1C">Total Kurang</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td style="border:1px solid #CBD5E1;padding:6px;font-weight:700">${Number(doc.systemQty || (Number(doc.physicalQty || 0) - Number(doc.surplusQty || 0)) || 0).toLocaleString('id-ID')} Pkk<div style="font-size:6pt;color:#64748B;font-weight:400">[Saldo Resmi Buku]</div></td>
+              <td style="border:1px solid #CBD5E1;padding:6px;font-weight:700">${Number(doc.systemQtySnapshot || doc.systemQty || 0).toLocaleString('id-ID')} Pkk<div style="font-size:6pt;color:#64748B;font-weight:400">Stok Sistem</div></td>
               <td style="border:1px solid #CBD5E1;padding:6px;font-weight:700">${Number(doc.physicalQty || 0).toLocaleString('id-ID')} Pkk</td>
-              <td style="border:1px solid #CBD5E1;padding:6px;font-weight:800;color:#059669">+${Number(doc.surplusQty || 0).toLocaleString('id-ID')} Pkk</td>
-              <td style="border:1px solid #CBD5E1;padding:6px;font-weight:800;background:#FFFBEB;color:#92400E">+${Number(doc.surplusQty || 0).toLocaleString('id-ID')} Pkk<div style="font-size:6pt;color:#B45309;font-weight:400">[Terkunci di BA Resmi]</div></td>
+              <td style="border:1px solid #CBD5E1;padding:6px;font-weight:800;color:#047857">+${Number(doc.totalSurplusQty || doc.surplusQty || 0).toLocaleString('id-ID')} Pkk</td>
+              <td style="border:1px solid #CBD5E1;padding:6px;font-weight:800;color:#B91C1C">-${Number(doc.totalShortageQty || doc.shortageQty || 0).toLocaleString('id-ID')} Pkk</td>
             </tr>
           </tbody>
         </table>
         <div style="font-size:6.5pt;color:#64748B;margin-top:4px;font-style:italic">
-          * Catatan: Saldo buku sistem tetap mengacu pada angka resmi dan tidak dirubah. Nilai selisih lebih diakui sebagai stok cadangan fisik terpisah batch.
+          * Catatan: Pengesahan dokumen tidak langsung mengubah saldo. Saldo berubah hanya setelah rekonsiliasi diterapkan melalui Central Hub.
         </div>
       </div>
+
+      ${Array.isArray(doc.bedenganDetails) && doc.bedenganDetails.length ? `
+      <div style="margin-bottom:12px">
+        <div style="font-size:7.8pt;font-weight:700;color:#0F172A;margin-bottom:5px;text-transform:uppercase">Rincian Rekonsiliasi per Bedengan</div>
+        <table style="width:100%;border-collapse:collapse;font-size:7pt;border:1px solid #CBD5E1">
+          <thead><tr style="background:#F8FAFC;font-weight:800;color:#334155;text-align:left">
+            <th style="border:1px solid #CBD5E1;padding:4px 6px">Bedengan</th>
+            <th style="border:1px solid #CBD5E1;padding:4px 6px;text-align:right">Referensi</th>
+            <th style="border:1px solid #CBD5E1;padding:4px 6px;text-align:right">Fisik</th>
+            <th style="border:1px solid #CBD5E1;padding:4px 6px;text-align:right">Selisih</th>
+            <th style="border:1px solid #CBD5E1;padding:4px 6px">Alasan</th>
+          </tr></thead>
+          <tbody>${doc.bedenganDetails.map(row => `
+            <tr>
+              <td style="border:1px solid #CBD5E1;padding:4px 6px;font-weight:700">${esc(row.bedenganCode || row.bedenganId || 'UNSPECIFIED')}</td>
+              <td style="border:1px solid #CBD5E1;padding:4px 6px;text-align:right">${Number(row.referenceQty || 0).toLocaleString('id-ID')} Pkk</td>
+              <td style="border:1px solid #CBD5E1;padding:4px 6px;text-align:right">${Number(row.physicalQty || 0).toLocaleString('id-ID')} Pkk</td>
+              <td style="border:1px solid #CBD5E1;padding:4px 6px;text-align:right;font-weight:800;color:${Number(row.difference || 0) >= 0 ? '#047857' : '#B91C1C'}">${Number(row.difference || 0) > 0 ? '+' : ''}${Number(row.difference || 0).toLocaleString('id-ID')} Pkk</td>
+              <td style="border:1px solid #CBD5E1;padding:4px 6px">${esc(row.reason || '-')}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>` : ''}
 
       <!-- II. REKAM JEJAK PEMERIKSAAN BERULANG (AUDIT TRAIL LENGKAP) -->
       <div style="margin-bottom:12px">
@@ -183,7 +209,7 @@ export function renderBapsbPrintHtml(doc, options = {}) {
       <!-- JUSTIFIKASI LAPANGAN -->
       <div style="margin-bottom:12px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;padding:7px 9px">
         <div style="font-size:7pt;font-weight:800;color:#334155;text-transform:uppercase;margin-bottom:2px">Catatan & Justifikasi Asisten Bibitan:</div>
-        <div style="font-size:7.2pt;color:#1E293B;line-height:1.4">${esc(doc.justifikasi || 'Pemeriksaan fisik telah disensus ulang dan valid lebih. Diakui sebagai cadangan buffer fisik bedengan.')}</div>
+        <div style="font-size:7.2pt;color:#1E293B;line-height:1.4">${esc(doc.justifikasi || 'Hasil pemeriksaan stok fisik telah dikonfirmasi dan diajukan untuk rekonsiliasi berjenjang.')}</div>
       </div>
 
       <!-- III. BUKTI FOTO FISIK PEMERIKSAAN DI LAPANGAN (MAKSIMAL 2 FOTO) -->
@@ -194,15 +220,15 @@ export function renderBapsbPrintHtml(doc, options = {}) {
         ${photos.length > 0 ? `
           <div class="bapb-preview-photos" style="display: flex; gap: ${isScreenPreview ? '8px' : '14px'}; justify-content: flex-start; align-items: flex-start;">
             ${photos.slice(0, 2).map((photoItem, pIdx) => {
-              const photoSrc = typeof photoItem === 'string' ? photoItem : (photoItem.image || photoItem.dataUrl || photoItem.url || '');
-              const photoLabel = typeof photoItem === 'object' && photoItem.round 
-                ? `Dokumentasi Putaran #${photoItem.round}` 
-                : `Dokumentasi Lapangan #${pIdx + 1}`;
-              const photoMeta = typeof photoItem === 'object' && photoItem.capturedAt 
-                ? `${formatDateTime(photoItem.capturedAt)}${photoItem.latitude != null ? ` · ${Number(photoItem.latitude).toFixed(4)}, ${Number(photoItem.longitude).toFixed(4)}` : ''}`
-                : '';
+    const photoSrc = typeof photoItem === 'string' ? photoItem : (photoItem.image || photoItem.dataUrl || photoItem.url || '');
+    const photoLabel = typeof photoItem === 'object' && photoItem.round
+      ? `Dokumentasi Putaran #${photoItem.round}`
+      : `Dokumentasi Lapangan #${pIdx + 1}`;
+    const photoMeta = typeof photoItem === 'object' && photoItem.capturedAt
+      ? `${formatDateTime(photoItem.capturedAt)}${photoItem.latitude != null ? ` · ${Number(photoItem.latitude).toFixed(4)}, ${Number(photoItem.longitude).toFixed(4)}` : ''}`
+      : '';
 
-              return `
+    return `
                 <div class="bapb-preview-photo-item" style="flex: 1; max-width: ${isScreenPreview ? '160px' : '250px'}; border: 1px solid #CBD5E1; border-radius: 6px; padding: ${isScreenPreview ? '4px' : '6px'}; background: #F8FAFC; text-align: center; box-sizing: border-box;">
                   ${photoSrc ? `
                     <img src="${photoSrc}" alt="${esc(photoLabel)}" style="width: 100%; height: ${isScreenPreview ? '90px' : '130px'}; object-fit: cover; border-radius: 4px; display: block;" />
@@ -217,7 +243,7 @@ export function renderBapsbPrintHtml(doc, options = {}) {
                   ${photoMeta ? `<div style="font-size: ${isScreenPreview ? '5.8pt' : '6.5pt'}; color: #64748B; margin-top: 1px;">${esc(photoMeta)}</div>` : ''}
                 </div>
               `;
-            }).join('')}
+  }).join('')}
           </div>
         ` : `
           <div style="border: 1px dashed #CBD5E1; border-radius: 6px; padding: ${isScreenPreview ? '8px' : '10px'}; font-size: ${isScreenPreview ? '7.2pt' : '8.5pt'}; color: #94A3B8; text-align: center;">
@@ -454,17 +480,17 @@ export function openBapsbPreviewModal(bapsbDoc, currentUser, onActionCallback = 
 
   if (canAskepSign) {
     actionButtons = `
-      <button id="bapsb-btn-close" type="button" class="bapb-btn-cancel">
-        Tutup
+      <button id="bapsb-btn-return" type="button" class="bapb-btn-cancel" style="color:#B91C1C;border-color:#FCA5A5">
+        Kembalikan
       </button>
-      <button id="bapsb-btn-askep-submit" type="button" class="bapb-btn-submit" style="background: #116834;">
+      <button id="bapsb-btn-askep-submit" type="button" class="bapb-btn-submit" style="background:#116834;font-size:.72rem;line-height:1.15;padding:0 7px;letter-spacing:-.01em;">
         Setujui & Teruskan ke Pengurus
       </button>
     `;
   } else if (canPengurusSign) {
     actionButtons = `
-      <button id="bapsb-btn-close" type="button" class="bapb-btn-cancel">
-        Tutup
+      <button id="bapsb-btn-return" type="button" class="bapb-btn-cancel" style="color:#B91C1C;border-color:#FCA5A5">
+        Kembalikan
       </button>
       <button id="bapsb-btn-pengurus-submit" type="button" class="bapb-btn-submit" style="background: #116834;">
         Sahkan Berita Acara (FINAL)
@@ -504,6 +530,15 @@ export function openBapsbPreviewModal(bapsbDoc, currentUser, onActionCallback = 
 
   document.getElementById('bapsb-btn-print')?.addEventListener('click', () => {
     printBapsbDocument(bapsbDoc);
+  });
+
+  document.getElementById('bapsb-btn-return')?.addEventListener('click', () => {
+    const reason = window.prompt('Masukkan alasan pengembalian BA ke Asisten Bibitan:');
+    if (!reason || !reason.trim()) return;
+    if (onActionCallback) {
+      onActionCallback(canAskepSign ? 'RETURN_ASKEP' : 'RETURN_PENGURUS', { reason: reason.trim() });
+    }
+    closeModal();
   });
 
   let sigHandler = null;
@@ -754,7 +789,7 @@ export function printBapsbDocument(bapsbDoc) {
 
   try {
     iframe.contentWindow?.addEventListener('afterprint', onPrintEnd);
-  } catch (_) {}
+  } catch (_) { }
   window.addEventListener('afterprint', onPrintEnd, { once: true });
 
   const onWindowFocusReturn = () => {

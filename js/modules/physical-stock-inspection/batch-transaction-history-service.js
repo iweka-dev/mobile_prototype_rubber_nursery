@@ -613,6 +613,19 @@ export function getBatchTransactionHistory(batchIdOrCode) {
     const statusText = diff === 0 ? 'Sesuai' : (diff > 0 ? 'Selisih Lebih' : 'Selisih Kurang');
     const actor = insp.inspectorName || insp.createdByName || insp.completedByName || insp.actorName || insp.createdBy || 'Asisten Bibitan';
     const timestamp = insp.completedAt || insp.inspectionDate || insp.tanggalPemeriksaan || insp.createdAt || new Date().toISOString();
+    const bedenganDetails = Array.isArray(insp.counts) ? insp.counts.map(row => ({
+      bedenganId: row.bedenganId || null,
+      bedenganCode: row.bedenganCode || row.bedenganId || 'TOTAL_BATCH',
+      referenceQty: row.referenceQty ?? null,
+      physicalQty: Number(row.physicalQty || 0),
+      difference: row.difference ?? null,
+      reason: row.reason || '',
+      referenceStatus: row.referenceStatus || 'LEGACY',
+      provenance: row.provenance || null
+    })) : [];
+    const detailNarrative = bedenganDetails.length
+      ? ` Rincian: ${bedenganDetails.map(row => `${row.bedenganCode} fisik ${row.physicalQty.toLocaleString('id-ID')} Pkk${row.difference !== null ? `, selisih ${Number(row.difference).toLocaleString('id-ID')} Pkk` : ''}${row.reason ? `, alasan ${row.reason}` : ''}`).join('; ')}.`
+      : '';
 
     rawTimeline.push({
       id: `psi-${insp.id}`,
@@ -627,36 +640,42 @@ export function getBatchTransactionHistory(batchIdOrCode) {
       qtyChange: diff,
       qtyUnit: `Pkk (${statusText})`,
       actor,
-      narrative: `Sensus fisik lapangan menghitung ${physicalQty.toLocaleString('id-ID')} Pkk fisik berbanding saldo buku sistem ${systemQty.toLocaleString('id-ID')} Pkk, menghasilkan status ${statusText} sebesar ${diffSign} Pkk.`,
+      narrative: `Sensus fisik lapangan menghitung ${physicalQty.toLocaleString('id-ID')} Pkk fisik berbanding saldo buku sistem ${systemQty.toLocaleString('id-ID')} Pkk, menghasilkan status ${statusText} sebesar ${diffSign} Pkk.${detailNarrative}`,
+      bedenganDetails,
+      reconciliationStatus: insp.reconciliationSnapshot?.reconciliationStatus || null,
+      unallocatedBatchBalance: insp.reconciliationSnapshot?.unallocatedBatchBalance ?? null,
       status: insp.status || 'COMPLETED',
       isPositive: diff >= 0
     });
   });
 
-  // 6. BERITA ACARA SELISIH LEBIH (physical_stock_bapsb)
+  // 6. BERITA ACARA REKONSILIASI STOK FISIK (physical_stock_bapsb)
   const bapsbList = storage.get('physical_stock_bapsb', []);
   bapsbList.filter(matchBatch).forEach(b => {
-    const surplus = Number(b.surplusQty ?? b.difference ?? b.selisihLebih ?? b.qty ?? 0);
+    const surplus = Number(b.totalSurplusQty ?? b.surplusQty ?? b.difference ?? b.selisihLebih ?? b.qty ?? 0);
+    const shortage = Number(b.totalShortageQty ?? b.shortageQty ?? 0);
     const actor = b.createdByName || b.actorName || b.createdBy || 'Asisten Bibitan';
-    const isFinal = Boolean(b.isFinal || b.status === 'FINAL');
+    const isFinal = Boolean(b.isFinal || ['FINAL', 'FINAL_PENDING_APPLICATION', 'APPLIED'].includes(b.status));
     const timestamp = b.updatedAt || b.bapsbDate || b.tanggal || b.createdAt || new Date().toISOString();
 
     rawTimeline.push({
       id: `bapsb-${b.id}`,
       category: 'BAPSB',
-      typeLabel: 'Berita Acara Selisih Lebih (BAPSB)',
+      typeLabel: b.documentType === 'PHYSICAL_STOCK_RECONCILIATION' ? 'BA Rekonsiliasi Stok Fisik' : 'Berita Acara Selisih Lebih (BAPSB)',
       badgeColor: '#B45309',
       badgeBg: '#FFFBEB',
       badgeBorder: '#FCD34D',
       icon: 'file-text',
       docNo: b.officialDocNo || b.docNo || `BAPSB-${String(b.id).slice(-6)}`,
       timestamp,
-      qtyChange: +surplus,
-      qtyUnit: 'Pkk Cadangan Sah',
+      qtyChange: surplus - shortage,
+      qtyUnit: 'Pkk Rekonsiliasi',
       actor,
-      narrative: `Penerbitan Berita Acara resmi mengesahkan selisih lebih fisik sebesar +${surplus.toLocaleString('id-ID')} Pkk sebagai stok cadangan fisik terpisah batch. Saldo buku sistem tetap terjaga murni tanpa perubahan.`,
-      status: isFinal ? 'FINAL (Disahkan Pengurus)' : (b.status || 'DALAM PERSETUJUAN'),
-      isPositive: true,
+      narrative: b.documentType === 'PHYSICAL_STOCK_RECONCILIATION'
+        ? `BA Rekonsiliasi mencatat selisih lebih +${surplus.toLocaleString('id-ID')} Pkk dan selisih kurang -${shortage.toLocaleString('id-ID')} Pkk. Mutasi saldo hanya berlaku setelah status DITERAPKAN melalui Central Hub.`
+        : `Penerbitan Berita Acara resmi mengesahkan selisih lebih fisik sebesar +${surplus.toLocaleString('id-ID')} Pkk.`,
+      status: b.status === 'APPLIED' ? 'DITERAPKAN' : (isFinal ? 'FINAL (Disahkan Pengurus)' : (b.status || 'DALAM PERSETUJUAN')),
+      isPositive: surplus >= shortage,
       isBapsb: true,
       bapsbDoc: b
     });
@@ -665,11 +684,11 @@ export function getBatchTransactionHistory(batchIdOrCode) {
   // 7. JURNAL INVENTORY TAMBAHAN (batch_inventory_journal)
   const journals = getBatchStockHistory(batch.batchId || batch.batchCode || batch.id);
   journals.forEach(j => {
-    if (j.txType === 'ADJUSTMENT' || j.txType === 'PHYSICAL_STOCK_CULL') {
+    if (['ADJUSTMENT', 'PHYSICAL_STOCK_CULL', 'PHYSICAL_STOCK_RECONCILIATION_SURPLUS', 'PHYSICAL_STOCK_RECONCILIATION_SHORTAGE'].includes(j.txType)) {
       const actor = j.createdByName || j.actorName || j.createdBy || 'Sistem Inventory';
-      const qty = Number(j.quantity ?? j.qty ?? j.amount ?? 0);
+      const qty = Number(j.qtyIn || 0) - Number(j.qtyOut || 0);
       const before = Number(j.balanceBefore ?? j.saldoSebelum ?? 0);
-      const after = Number(j.balanceAfter ?? j.saldoSesudah ?? 0);
+      const after = Number(j.balance ?? j.balanceAfter ?? j.saldoSesudah ?? 0);
 
       rawTimeline.push({
         id: `journal-${j.id || Math.random()}`,
@@ -684,7 +703,7 @@ export function getBatchTransactionHistory(batchIdOrCode) {
         qtyChange: qty,
         qtyUnit: 'Pkk',
         actor,
-        narrative: `Penyesuaian saldo buku besar sebesar ${qty.toLocaleString('id-ID')} Pkk. Saldo buku sebelum: ${before.toLocaleString('id-ID')} Pkk, saldo sesudah: ${after.toLocaleString('id-ID')} Pkk.`,
+        narrative: `${j.txType === 'PHYSICAL_STOCK_RECONCILIATION_SURPLUS' ? 'Penambahan' : j.txType === 'PHYSICAL_STOCK_RECONCILIATION_SHORTAGE' ? 'Pengurangan' : 'Penyesuaian'} saldo melalui jurnal rekonsiliasi sebesar ${qty > 0 ? '+' : ''}${qty.toLocaleString('id-ID')} Pkk${j.bedenganCode ? ` pada ${j.bedenganCode}` : ''}. Saldo sesudah: ${after.toLocaleString('id-ID')} Pkk.`,
         status: 'TERCATAT',
         isPositive: qty >= 0
       });

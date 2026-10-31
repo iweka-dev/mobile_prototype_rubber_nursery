@@ -31,3 +31,7 @@ tests/test-batch-transaction-history.js
 tests/test-physical-stock-bapsb.js
 tests/test-physical-stock-inspection.js
 
+tests/test-bapb-ui-simplification.js
+tests/test-pra-okulasi-multiple-executions-central-hub.js
+tests/test-selection-hasil-pemeriksaan-label-normalization.js
+tests/test-selection-pool-workspace-sync.js

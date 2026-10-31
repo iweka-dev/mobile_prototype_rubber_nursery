@@ -51,8 +51,8 @@ assert.ok(html.includes('12/10/2026'), 'UI harus memuat tanggal transaksi');
 // 3. Verifikasi Metadata Transaksi (C)
 assert.ok(html.includes('Program Pembibitan'), 'UI harus memuat label Program Pembibitan');
 assert.ok(html.includes('2026/TB/RNUR/001'), 'UI harus memuat kode program');
-assert.ok(html.includes('Dokumen Induk'), 'UI harus memuat label Dokumen Induk');
-assert.ok(html.includes('2026/SEL/001'), 'UI harus memuat kode dokumen induk');
+assert.ok(html.includes('Dokumen Referensi') || html.includes('Dokumen Induk'), 'UI harus memuat label Dokumen Referensi');
+assert.ok(html.includes('2026/SEL/001'), 'UI harus memuat kode dokumen referensi');
 
 // 4. Verifikasi Hasil Pemeriksaan (D)
 assert.ok(html.includes('Bibit Diperiksa'), 'UI harus memuat label "Bibit Diperiksa"');

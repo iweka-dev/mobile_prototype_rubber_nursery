@@ -34,7 +34,8 @@ import {
   syncAllSeedingsToPreGraftingSelectionDocuments,
   isPreGraftingSelection,
   syncAllApprovedPreGraftingSelectionDocuments,
-  isPrePlantingCullStockExempt
+  isPrePlantingCullStockExempt,
+  getSelectionStageCompletion
 } from '../selection/selection-manager.js';
 import { getInspectionChronologicalMaxAllowed, syncAllDederanRejectionsToSelectionPool, getBedenganInspectionSummary } from '../seeding/dederan-manager.js';
 import {
@@ -51,6 +52,11 @@ import {
   completePhysicalStockCullVerification,
   returnPhysicalStockCullVerification
 } from '../physical-stock-inspection/physical-stock-inspection-manager.js';
+import {
+  PHYSICAL_STOCK_RECONCILIATION_REFERENCE_TYPE,
+  applyApprovedPhysicalStockReconciliation,
+  validatePhysicalStockReconciliation
+} from '../physical-stock-inspection/physical-stock-reconciliation-service.js';
 
 export const VERIFICATION_STORAGE_KEY = 'verification_transactions';
 
@@ -126,7 +132,7 @@ export const VERIFICATION_10_MODULES = Object.freeze([
   {
     id: 'PEMERIKSAAN',
     label: 'Pemeriksaan',
-    types: ['PEMERIKSAAN', 'PEMERIKSAAN_DEDERAN', 'SELEKSI_PRA_OKULASI', 'INSPECTION'],
+    types: ['PEMERIKSAAN', 'PEMERIKSAAN_DEDERAN', 'SELEKSI_PRA_OKULASI', 'INSPECTION', 'PHYSICAL_STOCK_RECONCILIATION'],
     iconName: 'documentSearch',
     order: 5
   },
@@ -212,6 +218,7 @@ export const CANONICAL_STORAGE_MAP = Object.freeze({
   PEMERIKSAAN: ['inspection_transactions'],
   INSPECTION: ['inspection_transactions'],
   PEMERIKSAAN_DEDERAN: ['dederan_inspections'],
+  PHYSICAL_STOCK_RECONCILIATION: ['physical_stock_bapsb'],
   PENYELEKSIAN: ['selection_transactions'],
   SELECTION: ['selection_transactions'],
   SELEKSI_PRA_OKULASI: ['pre_grafting_selection_documents', 'selection_transactions'],
@@ -479,6 +486,33 @@ export function getVerificationDetailData(sourceRecord, userCtx = null, referenc
 
 function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMAAN') {
   switch (refType) {
+    case 'PHYSICAL_STOCK_RECONCILIATION': {
+      const lines = Array.isArray(raw.reconciliationLines) ? raw.reconciliationLines : [];
+      const totalSurplus = Number(raw.totalSurplusQty || raw.surplusQty || 0);
+      const totalShortage = Number(raw.totalShortageQty || raw.shortageQty || 0);
+      const lineSummary = lines.map(line => {
+        const quantity = Number(line.quantity || Math.abs(line.difference || 0));
+        const prefix = String(line.direction || '').toUpperCase() === 'SURPLUS' ? '+' : '-';
+        return `${line.bedenganCode || line.bedenganId || 'TOTAL_BATCH'}: ${prefix}${formatSafeNumber(quantity)} Pkk`;
+      }).join(' | ');
+      return {
+        title: 'Rekonsiliasi Stok Fisik',
+        info: `Batch ${raw.batchCode || raw.batchId || '-'} · BA ${raw.docNo || '-'}`,
+        mainQty: `${formatSafeNumber(totalSurplus)} Lebih · ${formatSafeNumber(totalShortage)} Kurang`,
+        unit: 'Pkk',
+        summary: `Rekonsiliasi: +${formatSafeNumber(totalSurplus)} / -${formatSafeNumber(totalShortage)} Pkk`,
+        fields: [
+          { label: 'Nomor BA', value: raw.docNo || '-' },
+          { label: 'Batch', value: raw.batchCode || raw.batchId || '-' },
+          { label: 'Selisih Lebih', value: `+${formatSafeNumber(totalSurplus)} Pkk`, highlight: totalSurplus > 0 },
+          { label: 'Selisih Kurang', value: `-${formatSafeNumber(totalShortage)} Pkk`, highlight: totalShortage > 0 },
+          { label: 'Rincian Bedengan', value: lineSummary || '-' },
+          { label: 'Persetujuan', value: 'ASB → Asisten Kepala → Pengurus (lengkap)' },
+          { label: 'Tindakan', value: 'Terapkan ke Inventory Ledger' }
+        ]
+      };
+    }
+
     case 'TIDAK_HADIR': {
       const totalAbsent = raw.totalAbsent !== undefined
         ? raw.totalAbsent
@@ -882,6 +916,32 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
         }
       }
 
+      const isPindahSemai = raw.originType === 'REJECT_PENYEMAIAN' ||
+        raw.sourceModule === 'PENYEMAIAN' ||
+        raw.sourceTransactionType === 'SEEDING' ||
+        docNoStr.includes('/CULL/PS/') ||
+        stage.includes('Pindah Semai');
+      if (isPindahSemai && (layak === '-' || Number(layak) === 0)) {
+        const seedingTransactions = storage.get('seeding_transactions', []);
+        const sourceSeeding = seedingTransactions.find(tx =>
+          (raw.sourceTransactionId && String(tx.id || '') === String(raw.sourceTransactionId)) ||
+          (raw.sourceDocNo && String(tx.docNo || tx.seedingDocNo || '') === String(raw.sourceDocNo)) ||
+          (raw.seedingDocNo && String(tx.docNo || tx.seedingDocNo || '') === String(raw.seedingDocNo))
+        );
+        if (sourceSeeding) {
+          const retainedFromSource = Number(
+            sourceSeeding.totalDisemai ??
+            sourceSeeding.jumlahBibitDipindahkan ??
+            sourceSeeding.disemai ??
+            sourceSeeding.rows?.[0]?.disemai ??
+            0
+          );
+          if (Number.isFinite(retainedFromSource) && retainedFromSource > 0) {
+            layak = retainedFromSource;
+          }
+        }
+      }
+
       const formattedLayak = formatSafeNumber(layak);
       const formattedAfkir = formatSafeNumber(afkir);
       const reasonCandidates = [
@@ -934,6 +994,12 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
       const rawNotes = raw.keterangan || raw.catatan || raw.notes;
       const isLegacyFallback = Boolean(rawNotes && raw.alasan && String(rawNotes).trim() === String(raw.alasan).trim());
       const displayNotes = (!isLegacyFallback && rawNotes !== undefined && rawNotes !== null && String(rawNotes).trim() !== '' && String(rawNotes).trim() !== '-') ? String(rawNotes).trim() : '-';
+      const physicalStockLineFields = raw.sourceModule === 'PHYSICAL_STOCK_INSPECTION' && Array.isArray(raw.physicalStockLines) && raw.physicalStockLines.length
+        ? [{
+            label: 'Rincian Selisih per Bedengan',
+            value: raw.physicalStockLines.map(line => `${line.bedenganCode || line.bedenganId || 'UNSPECIFIED'}: -${formatSafeNumber(line.shortage || 0)} Pkk${line.reason ? ` (${line.reason})` : ''}`).join(' | ')
+          }]
+        : [];
 
       return {
         title: 'Penyeleksian Bibit',
@@ -947,7 +1013,8 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
           { label: 'Bedengan / Lokasi', value: bedengan },
           { label: 'Bibit Afkir (Selected)', value: afkir !== '-' ? `${formattedAfkir} Pkk` : '-', highlight: true },
           { label: 'Bibit Dipertahankan', value: layak !== '-' ? `${formattedLayak} Pkk` : '-' },
-          { label: 'Keterangan', value: displayNotes }
+          { label: 'Keterangan', value: displayNotes },
+          ...physicalStockLineFields
         ]
       };
     }
@@ -1201,7 +1268,14 @@ export function evaluateRecordConsistency(referenceType, record, fullDataset = n
   const docNo = record.docNo || record.nir || record.dispatchNo || record.receiptDocNo || record.selectionNo || record.destructionNo || record.id;
 
   // Validasi spesifik per tipe referensi
-  if (referenceType === REFERENCE_TYPES.DISPATCH || referenceType === 'PENGELUARAN') {
+  if (referenceType === PHYSICAL_STOCK_RECONCILIATION_REFERENCE_TYPE) {
+    const validation = validatePhysicalStockReconciliation(record.id || record.docNo);
+    validation.errors.forEach(message => errors.push({
+      type: 'PHYSICAL_STOCK_RECONCILIATION_BLOCKED',
+      severity: 'ERROR',
+      message
+    }));
+  } else if (referenceType === REFERENCE_TYPES.DISPATCH || referenceType === 'PENGELUARAN') {
     const dataset = fullDataset || getConsolidatedData(null);
     if (record.parentRequestId && !dataset.requests.some(r => r.id === record.parentRequestId || r.docNo === record.parentRequestId)) {
       errors.push({ type: 'ORPHAN_DISPATCH', severity: 'ERROR', message: `Parent Request (${record.parentRequestId}) tidak ditemukan.` });
@@ -1226,6 +1300,19 @@ export function evaluateRecordConsistency(referenceType, record, fullDataset = n
         type: 'STALE_PHYSICAL_STOCK_INSPECTION',
         severity: 'ERROR',
         message: physicalStockValidation.reason || 'Pemeriksaan stok fisik sumber sudah tidak valid.'
+      });
+    }
+
+    if (record.sourceModule === 'PHYSICAL_STOCK_INSPECTION' && Array.isArray(record.physicalStockLines)) {
+      const lineTotal = record.physicalStockLines.reduce((sum, line) => sum + Math.abs(Number(line.shortage || 0)), 0);
+      const declaredTotal = Math.abs(Number(record.jumlahAfkir || record.quantity || 0));
+      if (lineTotal !== declaredTotal) {
+        errors.push({ type: 'PHYSICAL_STOCK_LINE_TOTAL_MISMATCH', severity: 'ERROR', message: 'Total afkir tidak sama dengan akumulasi shortage per Bedengan.' });
+      }
+      record.physicalStockLines.forEach(line => {
+        if (Number(line.shortage || 0) > 0 && !String(line.reason || '').trim()) {
+          errors.push({ type: 'PHYSICAL_STOCK_REASON_REQUIRED', severity: 'ERROR', message: `Alasan selisih kurang wajib diisi untuk Bedengan ${line.bedenganCode || line.bedenganId || 'UNSPECIFIED'}.` });
+        }
       });
     }
 
@@ -2113,6 +2200,10 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
     throw new Error('Otorisasi gagal: User aktif tidak ditemukan.');
   }
 
+  if (referenceType === PHYSICAL_STOCK_RECONCILIATION_REFERENCE_TYPE) {
+    return applyApprovedPhysicalStockReconciliation(referenceId, currentUser);
+  }
+
   // [CATATAN OPSI 1 - SELECTION GATE HARMONIZATION]:
   // Approval dokumen satuan (seperti Absensi, Penerimaan, SOW, Perawatan, dll.) dapat diproses
   // secara mandiri agar tidak menimbulkan deadlock operasional harian Asisten Bibitan.
@@ -2135,6 +2226,48 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
   const sourceRecord = findSourceRecord(referenceType, referenceId, currentUser);
   if (!sourceRecord) {
     throw new Error(`Data transaksi sumber tidak ditemukan (${referenceType}:${referenceId}).`);
+  }
+  const normalizedReferenceType = String(referenceType || '').toUpperCase();
+  const sourceDocNo = String(sourceRecord.docNo || sourceRecord.selectionNo || '').toUpperCase();
+  const isPindahSemaiCull = ['PENYELEKSIAN', 'SELECTION'].includes(normalizedReferenceType) && (
+    sourceRecord.originType === 'REJECT_PENYEMAIAN' ||
+    sourceRecord.sourceModule === 'PENYEMAIAN' ||
+    sourceRecord.sourceTransactionType === 'SEEDING' ||
+    sourceDocNo.includes('/CULL/PS/')
+  );
+  const retainedSnapshot = Number(
+    sourceRecord.actualBibitRetainedQty ??
+    sourceRecord.bibitDipertahankan ??
+    sourceRecord.jumlahLayak ??
+    0
+  );
+  if (isPindahSemaiCull && retainedSnapshot <= 0) {
+    const sourceSeeding = storage.get('seeding_transactions', []).find(tx =>
+      (sourceRecord.sourceTransactionId && String(tx.id || '') === String(sourceRecord.sourceTransactionId)) ||
+      (sourceRecord.sourceDocNo && String(tx.docNo || tx.seedingDocNo || '') === String(sourceRecord.sourceDocNo)) ||
+      (sourceRecord.seedingDocNo && String(tx.docNo || tx.seedingDocNo || '') === String(sourceRecord.seedingDocNo))
+    );
+    const retainedFromSource = Number(
+      sourceSeeding?.totalDisemai ??
+      sourceSeeding?.jumlahBibitDipindahkan ??
+      sourceSeeding?.disemai ??
+      sourceSeeding?.rows?.[0]?.disemai ??
+      0
+    );
+    if (Number.isFinite(retainedFromSource) && retainedFromSource > 0) {
+      sourceRecord.jumlahLayak = retainedFromSource;
+      sourceRecord.actualBibitRetainedQty = retainedFromSource;
+      sourceRecord.bibitDipertahankan = retainedFromSource;
+      sourceRecord.updatedAt = new Date().toISOString();
+      const selectionTransactions = storage.get('selection_transactions', []);
+      const sourceIndex = selectionTransactions.findIndex(item =>
+        String(item.id || item.selectionId || item.docNo || '') === String(sourceRecord.id || sourceRecord.selectionId || sourceRecord.docNo || '')
+      );
+      if (sourceIndex >= 0) {
+        selectionTransactions[sourceIndex] = { ...selectionTransactions[sourceIndex], ...sourceRecord };
+        storage.set('selection_transactions', selectionTransactions);
+      }
+    }
   }
   if (['PEMELIHARAAN', 'REKAM_PEMELIHARAAN', 'NURSERY_ACTIVITY'].includes(String(referenceType).toUpperCase()) && (sourceRecord.activityEntryMode === 'MANDORAN' || sourceRecord.workGroupRoleCode) && Array.isArray(sourceRecord.pekerja) && sourceRecord.pekerja.length) {
     throw new Error('Rekam Pemeliharaan harus disetujui per pekerja melalui rincian pekerja.');
@@ -2275,28 +2408,38 @@ export function approveVerification({ referenceType, referenceId, notes = '', cu
           const pIdx = allPreDocs.findIndex(d => (parentId && d.id === parentId) || (parentNo && d.docNo === parentNo));
           if (pIdx !== -1) {
             const parentDoc = allPreDocs[pIdx];
-            parentDoc.status = 'DISETUJUI';
-            parentDoc.isFinal = true;
-            parentDoc.verificationStatus = VERIFICATION_STATUS.TERVERIFIKASI;
-            parentDoc.verifiedByUserId = currentUser.userId || currentUser.id;
-            parentDoc.verifiedByName = currentUser.name || 'Asisten Bibitan';
-            parentDoc.verifiedByRole = currentUser.role || ROLES.ASISTEN_BIBITAN;
-            parentDoc.verifiedAt = nowIso;
-            parentDoc.approvalNotes = notes || 'Seluruh transaksi Pemeriksaan Pra-Okulasi disetujui';
-            parentDoc.updatedAt = nowIso;
-            storage.set('pre_grafting_selection_documents', allPreDocs);
+            const completion = getSelectionStageCompletion(parentDoc, siblings);
+            if (!completion.isComplete) {
+              console.warn(`[approveVerification] Parent ${parentDoc.docNo} belum dapat difinalisasi: pemeriksaan baru ${completion.progress}%.`);
+            }
+            if (completion.isComplete) {
+              parentDoc.status = 'DISETUJUI';
+              parentDoc.isFinal = true;
+              parentDoc.isCompleted = true;
+              parentDoc.progress = 100;
+              parentDoc.remainingPolybag = 0;
+              parentDoc.sisaPolybag = 0;
+              parentDoc.verificationStatus = VERIFICATION_STATUS.TERVERIFIKASI;
+              parentDoc.verifiedByUserId = currentUser.userId || currentUser.id;
+              parentDoc.verifiedByName = currentUser.name || 'Asisten Bibitan';
+              parentDoc.verifiedByRole = currentUser.role || ROLES.ASISTEN_BIBITAN;
+              parentDoc.verifiedAt = nowIso;
+              parentDoc.approvalNotes = notes || 'Seluruh transaksi Pemeriksaan Pra-Okulasi disetujui';
+              parentDoc.updatedAt = nowIso;
+              storage.set('pre_grafting_selection_documents', allPreDocs);
 
-            const stageNorm = String(parentDoc.selectionStage || '').toUpperCase();
-            try {
-              if (stageNorm === 'SELEKSI_I' || stageNorm === 'SELEKSI_1') {
-                const gate = canCreateSelection2Document(parentDoc);
-                if (gate.canCreate) createSelection2DocumentFromSelection1(parentDoc, currentUser);
-              } else if (stageNorm === 'SELEKSI_II' || stageNorm === 'SELEKSI_2') {
-                const gate = canCreateSelection3Document(parentDoc);
-                if (gate.canCreate) createSelection3DocumentFromSelection2(parentDoc, currentUser);
+              const stageNorm = String(parentDoc.selectionStage || '').toUpperCase();
+              try {
+                if (stageNorm === 'SELEKSI_I' || stageNorm === 'SELEKSI_1') {
+                  const gate = canCreateSelection2Document(parentDoc);
+                  if (gate.canCreate) createSelection2DocumentFromSelection1(parentDoc, currentUser);
+                } else if (stageNorm === 'SELEKSI_II' || stageNorm === 'SELEKSI_2') {
+                  const gate = canCreateSelection3Document(parentDoc);
+                  if (gate.canCreate) createSelection3DocumentFromSelection2(parentDoc, currentUser);
+                }
+              } catch (genErr) {
+                console.warn('[approveVerification] Downstream generation notice:', genErr.message);
               }
-            } catch (genErr) {
-              console.warn('[approveVerification] Downstream generation notice:', genErr.message);
             }
           }
         }

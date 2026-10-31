@@ -8,7 +8,6 @@ import { getCurrentUserContext, resolveUserContext, ROLES } from '../../core/use
 import { hasActionableSelection } from '../selection/selection-manager.js';
 import { getActionableDestructionCount, getEligibleSelectionDocsForBapb } from '../destruction/destruction-manager.js';
 import { renderAsbBottomNav, attachAsbBottomNavEvents } from '../../components/bottom-nav-asb.js';
-import { renderPemeriksaanSummaryCardHtml } from '../verification/asb-summary-cards.js';
 import { CONFIG } from '../../core/config.js';
 import { getPhysicalStockActionableCount } from '../physical-stock-inspection/physical-stock-inspection-manager.js';
 import {
@@ -56,7 +55,7 @@ import {
   renderProgramBatchCompactView,
   handleBatchRowClick,
   renderGlobalChildTransactionsSection
-} from '../selection/selection-landing.js';
+} from '../selection/selection-landing.js?v=188';
 
 let activeInspectionModuleTab = 'DEDERAN'; // 'DEDERAN' | 'SELEKSI_PRA_OKULASI' | 'OKULASI'
 let activePreGraftingTab = 'SELEKSI_1'; // 'SELEKSI_1' | 'SELEKSI_2' | 'SELEKSI_3'
@@ -188,8 +187,8 @@ function attachInspectionListControlEvents(app, module) {
   applyInspectionListControls(app, module);
 }
 
-function countPendingPreGraftingDocuments(docs = []) {
-  return docs.filter(doc => {
+export function countPendingPreGraftingDocuments(docs = []) {
+  const actionableDocs = docs.filter(doc => {
     const statuses = [doc.status, doc.verificationStatus, doc.approvalStatus, doc.submissionStatus]
       .filter(Boolean)
       .map(status => String(status).trim().toUpperCase());
@@ -207,7 +206,21 @@ function countPendingPreGraftingDocuments(docs = []) {
       ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI', 'DATA_TERKONFIRMASI', 'FINAL'].includes(status)
     );
     return !isFinal;
-  }).length;
+  });
+
+  // Kartu UI dikelompokkan pada level Tahap + Program + Batch. Badge harus
+  // memakai unit hitung yang sama agar beberapa parent/Bedengan pada satu
+  // Batch tidak menaikkan notifikasi secara ganda.
+  const actionableBatchKeys = new Set(actionableDocs.map(doc => {
+    const rawStage = String(doc.selectionStage || doc.stage || 'SELEKSI_I').trim().toUpperCase();
+    const stage = ['SELEKSI_I', 'SELEKSI_1'].includes(rawStage)
+      ? 'SELEKSI_1'
+      : (['SELEKSI_II', 'SELEKSI_2'].includes(rawStage) ? 'SELEKSI_2' : (['SELEKSI_III', 'SELEKSI_3'].includes(rawStage) ? 'SELEKSI_3' : rawStage));
+    const program = String(doc.programCode || doc.programId || doc.programName || 'PROGRAM-UNKNOWN').trim().toUpperCase();
+    const batch = String(doc.batchCode || doc.batchNo || doc.batchId || doc.id || doc.docNo || 'BATCH-UNKNOWN').trim().toUpperCase();
+    return `${stage}::${program}::${batch}`;
+  }));
+  return actionableBatchKeys.size;
 }
 
 export function setActiveFilterProgram(prog) {
@@ -355,10 +368,8 @@ function renderInspectionLandingAsistenBibitan() {
         </div>
       </header>
 
-      <!-- BODY / PEMERIKSAAN SUMMARY CARD + CARDS GRID -->
+      <!-- BODY / CARDS GRID -->
       <main class="beranda-body" style="flex: 1; min-height: 0; overflow-y: auto; padding: 12px 10px 14px; display: flex; flex-direction: column; gap: 10px;">
-        ${renderPemeriksaanSummaryCardHtml(userCtx)}
-
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
           ${menuCards}
         </div>
@@ -677,7 +688,7 @@ export function renderInspectionLanding() {
         </button>
         <button id="tab-insp-seleksi-pra-okulasi" type="button" style="padding: 12px 2px; font-size: 0.82rem; font-weight: ${activeInspectionModuleTab === 'SELEKSI_PRA_OKULASI' ? '700' : '600'}; color: ${activeInspectionModuleTab === 'SELEKSI_PRA_OKULASI' ? '#116834' : '#64748B'}; border: none; border-bottom: 2.5px solid ${activeInspectionModuleTab === 'SELEKSI_PRA_OKULASI' ? '#116834' : 'transparent'}; background: transparent; cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; margin-bottom: -1px; transition: color 0.15s ease;">
           <span>Pemeriksaan Pra-Okulasi</span>
-          ${preGraftingTotalCount > 0 ? `<span title="${preGraftingTotalCount} dokumen perlu tindakan" style="background: ${activeInspectionModuleTab === 'SELEKSI_PRA_OKULASI' ? '#116834' : '#64748B'}; color: #FFFFFF; font-size: 0.68rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; line-height: 1.2; min-width: 16px; text-align: center;">${preGraftingTotalCount}</span>` : ''}
+          ${preGraftingTotalCount > 0 ? `<span title="${preGraftingTotalCount} Batch perlu tindakan" style="background: ${activeInspectionModuleTab === 'SELEKSI_PRA_OKULASI' ? '#116834' : '#64748B'}; color: #FFFFFF; font-size: 0.68rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; line-height: 1.2; min-width: 16px; text-align: center;">${preGraftingTotalCount}</span>` : ''}
         </button>
         <button id="tab-insp-okulasi" type="button" style="padding: 12px 2px; font-size: 0.82rem; font-weight: ${activeInspectionModuleTab === 'OKULASI' ? '700' : '600'}; color: ${activeInspectionModuleTab === 'OKULASI' ? '#116834' : '#64748B'}; border: none; border-bottom: 2.5px solid ${activeInspectionModuleTab === 'OKULASI' ? '#116834' : 'transparent'}; background: transparent; cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; margin-bottom: -1px; transition: color 0.15s ease;">
           <span>Pemeriksaan Okulasi</span>
@@ -1976,6 +1987,7 @@ export function renderPreGraftingInspectionSection(user, userCtx, preGraftingDoc
   const authorizedAllTxs = getAuthorizedTransactions(rawAllTxs, userCtx);
 
   const stageChildTxs = authorizedAllTxs.filter(tx => {
+    if (tx.isSuperseded) return false;
     if (
       tx.originType === 'CULL_DECLARATION' ||
       tx.isCullDeclaration ||
@@ -2009,15 +2021,15 @@ export function renderPreGraftingInspectionSection(user, userCtx, preGraftingDoc
     <div style="display: flex; background: #E8EDF3; border: 1px solid #D5DEE8; border-radius: 10px; padding: 5px; margin: 2px 0 14px; gap: 4px; box-shadow: inset 0 1px 2px rgba(15,23,42,0.04);">
       <button id="subtab-seleksi-1" type="button" style="flex: 1; height: 38px; padding: 0 8px; font-size: 0.80rem; font-weight: ${activePreGraftingTab === 'SELEKSI_1' ? '700' : '600'}; color: ${activePreGraftingTab === 'SELEKSI_1' ? '#116834' : '#64748B'}; background: ${activePreGraftingTab === 'SELEKSI_1' ? '#FFFFFF' : 'transparent'}; border: ${activePreGraftingTab === 'SELEKSI_1' ? '1px solid rgba(0,0,0,0.04)' : '1px solid transparent'}; border-radius: 6px; cursor: pointer; box-shadow: ${activePreGraftingTab === 'SELEKSI_1' ? '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)' : 'none'}; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.15s ease;">
         <span>Seleksi I</span>
-        ${pendingSeleksi1Count > 0 ? `<span title="${pendingSeleksi1Count} dokumen perlu tindakan" style="background: ${activePreGraftingTab === 'SELEKSI_1' ? '#116834' : '#64748B'}; color: #FFF; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; line-height: 1.2; min-width: 16px; text-align: center;">${pendingSeleksi1Count}</span>` : ''}
+        ${pendingSeleksi1Count > 0 ? `<span title="${pendingSeleksi1Count} Batch perlu tindakan" style="background: ${activePreGraftingTab === 'SELEKSI_1' ? '#116834' : '#64748B'}; color: #FFF; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; line-height: 1.2; min-width: 16px; text-align: center;">${pendingSeleksi1Count}</span>` : ''}
       </button>
       <button id="subtab-seleksi-2" type="button" style="flex: 1; height: 38px; padding: 0 8px; font-size: 0.80rem; font-weight: ${activePreGraftingTab === 'SELEKSI_2' ? '700' : '600'}; color: ${activePreGraftingTab === 'SELEKSI_2' ? '#116834' : '#64748B'}; background: ${activePreGraftingTab === 'SELEKSI_2' ? '#FFFFFF' : 'transparent'}; border: ${activePreGraftingTab === 'SELEKSI_2' ? '1px solid rgba(0,0,0,0.04)' : '1px solid transparent'}; border-radius: 6px; cursor: pointer; box-shadow: ${activePreGraftingTab === 'SELEKSI_2' ? '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)' : 'none'}; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.15s ease;">
         <span>Seleksi II</span>
-        ${pendingSeleksi2Count > 0 ? `<span title="${pendingSeleksi2Count} dokumen perlu tindakan" style="background: ${activePreGraftingTab === 'SELEKSI_2' ? '#116834' : '#64748B'}; color: #FFF; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; line-height: 1.2; min-width: 16px; text-align: center;">${pendingSeleksi2Count}</span>` : ''}
+        ${pendingSeleksi2Count > 0 ? `<span title="${pendingSeleksi2Count} Batch perlu tindakan" style="background: ${activePreGraftingTab === 'SELEKSI_2' ? '#116834' : '#64748B'}; color: #FFF; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; line-height: 1.2; min-width: 16px; text-align: center;">${pendingSeleksi2Count}</span>` : ''}
       </button>
       <button id="subtab-seleksi-3" type="button" style="flex: 1; height: 38px; padding: 0 8px; font-size: 0.80rem; font-weight: ${activePreGraftingTab === 'SELEKSI_3' ? '700' : '600'}; color: ${activePreGraftingTab === 'SELEKSI_3' ? '#116834' : '#64748B'}; background: ${activePreGraftingTab === 'SELEKSI_3' ? '#FFFFFF' : 'transparent'}; border: ${activePreGraftingTab === 'SELEKSI_3' ? '1px solid rgba(0,0,0,0.04)' : '1px solid transparent'}; border-radius: 6px; cursor: pointer; box-shadow: ${activePreGraftingTab === 'SELEKSI_3' ? '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)' : 'none'}; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.15s ease;">
         <span>Seleksi III</span>
-        ${pendingSeleksi3Count > 0 ? `<span title="${pendingSeleksi3Count} dokumen perlu tindakan" style="background: ${activePreGraftingTab === 'SELEKSI_3' ? '#116834' : '#64748B'}; color: #FFF; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; line-height: 1.2; min-width: 16px; text-align: center;">${pendingSeleksi3Count}</span>` : ''}
+        ${pendingSeleksi3Count > 0 ? `<span title="${pendingSeleksi3Count} Batch perlu tindakan" style="background: ${activePreGraftingTab === 'SELEKSI_3' ? '#116834' : '#64748B'}; color: #FFF; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; line-height: 1.2; min-width: 16px; text-align: center;">${pendingSeleksi3Count}</span>` : ''}
       </button>
     </div>
 

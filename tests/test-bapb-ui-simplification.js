@@ -114,6 +114,7 @@ import {
   finalizeBapbDocument
 } from '../js/modules/destruction/destruction-manager.js';
 import { renderDestructionLanding } from '../js/modules/destruction/destruction-landing.js';
+import { renderInspectionLanding } from '../js/modules/inspection/inspection-landing.js';
 
 console.log('================================================================================');
 console.log('TEST SUITE: PENYEMPURNAAN UI & TANDA TANGAN BERITA ACARA PEMUSNAHAN BIBIT');
@@ -418,6 +419,49 @@ runTest('TC-UI-06', 'Dokumen FINAL bersifat kekal dan menolak revisi atau peruba
     /Dokumen BAPB yang sudah berstatus FINAL bersifat kekal/,
     'Dokumen FINAL tidak boleh difinalisasi ulang'
   );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 7: Ringkasan dokumen afkir eligible pada halaman utama
+// -----------------------------------------------------------------------------
+runTest('TC-UI-07', 'Ringkasan menampilkan jumlah dokumen afkir yang perlu dibuatkan BAPB', () => {
+  store.clear();
+  storage.set(KEYS.SESSION, userASB);
+  storage.set(DESTRUCTION_STORAGE_KEY, []);
+  storage.set('selection_transactions', [{
+    id: 'SEL-ELIGIBLE-001', docNo: '2026/CULL/SEL-I/001',
+    estateId: 'EST-TBS', divisionId: 'DIV-001',
+    jumlahAfkir: 1000, status: 'DISETUJUI', isFinal: true
+  }, {
+    id: 'SEL-ELIGIBLE-002', docNo: '2026/CULL/SEL-I/002',
+    estateId: 'EST-TBS', divisionId: 'DIV-001',
+    jumlahAfkir: 2000, status: 'DISETUJUI', isFinal: true
+  }, {
+    id: 'SEL-NOT-ELIGIBLE', docNo: '2026/CULL/SEL-I/003',
+    estateId: 'EST-TBS', divisionId: 'DIV-001',
+    jumlahAfkir: 500, status: 'MENUNGGU_VERIFIKASI'
+  }]);
+
+  renderDestructionLanding();
+  assert.ok(mockApp.innerHTML.includes('id="bapb-eligible-summary"'));
+  assert.ok(mockApp.innerHTML.includes('Ada <strong>2 dokumen</strong> yang perlu dibuatkan Berita Acara Pemusnahan Bibit.'));
+  assert.ok(mockApp.innerHTML.includes('class="bapb-action-notif-dot notif-dot"'), 'Tombol Buat Berita Acara menampilkan red dot');
+
+  const originalGetElementById = global.document.getElementById;
+  global.document.getElementById = (id) => id === 'main-content' ? null : originalGetElementById(id);
+  renderInspectionLanding();
+  global.document.getElementById = originalGetElementById;
+  assert.ok(mockApp.innerHTML.includes('data-menu-id="pemusnahan-bibit"'));
+  assert.ok(mockApp.innerHTML.includes('bapb-menu-notif-dot'), 'Menu Pemusnahan Bibit menampilkan red dot');
+
+  storage.set('selection_transactions', [{
+    id: 'SEL-NOT-ELIGIBLE', docNo: '2026/CULL/SEL-I/003',
+    estateId: 'EST-TBS', divisionId: 'DIV-001',
+    jumlahAfkir: 500, status: 'MENUNGGU_VERIFIKASI'
+  }]);
+  renderDestructionLanding();
+  assert.ok(!mockApp.innerHTML.includes('id="bapb-eligible-summary"'), 'Ringkasan tidak tampil jika jumlah eligible 0');
+  assert.ok(!mockApp.innerHTML.includes('bapb-action-notif-dot'), 'Red dot tombol hilang jika jumlah eligible 0');
 });
 
 console.log('================================================================================');

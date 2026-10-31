@@ -1,5 +1,6 @@
 import { navigate } from '../../core/router.js';
 import { session } from '../../core/session.js';
+import { storage } from '../../core/storage.js';
 import { esc, formatDateTime, formatDate } from '../../core/utils.js';
 import { toast } from '../../components/toast.js';
 import { renderAsbBottomNav, attachAsbBottomNavEvents } from '../../components/bottom-nav-asb.js';
@@ -24,6 +25,8 @@ import {
   BAPSB_STATUS_LABELS,
   createBapsbDraft,
   signBapsbAskep,
+  returnBapsbAskep,
+  returnBapsbPengurus,
   finalizeBapsbPengurus,
   getBapsbById,
   getBapsbByInspectionId,
@@ -47,10 +50,89 @@ const STATUS_LABEL = Object.freeze({
   SHORTAGE_OPEN: 'Selisih kurang',
   SHORTAGE_PENDING_VERIFICATION: 'Menunggu verifikasi afkir',
   SHORTAGE_VERIFIED: 'Afkir terverifikasi',
+  MIXED: 'Selisih campuran',
+  UNRESOLVED: 'Rekonsiliasi perlu ditinjau',
   CORRECTED: 'Dikoreksi',
   KOREKSI_BERLANGSUNG: 'Koreksi berlangsung',
   STOCK_CHANGED: 'Stok berubah'
 });
+
+const INVALID_BATCH_TRANSACTION_STATUS = new Set([
+  'DRAFT', 'DITOLAK', 'REJECTED', 'DIBATALKAN', 'BATAL', 'CANCELLED',
+  'VOID', 'DITARIK', 'WITHDRAWN', 'DIKEMBALIKAN', 'DELETED'
+]);
+
+export function resolvePhysicalStockBackRoute(currentUser) {
+  const role = normalizeRole(currentUser?.role || currentUser?.rawRole);
+  if (role === ROLES.ASKEP || role === 'ASISTEN_KEPALA' || role === ROLES.PENGURUS) {
+    return '/home';
+  }
+  return '/inspection';
+}
+
+export function resolveBatchTransactionMetadata(inspection) {
+  const identities = new Set([inspection?.batchId, inspection?.batchCode]
+    .filter(Boolean)
+    .map(value => String(value).trim().toUpperCase()));
+  if (!identities.size) return { growthStage: '-', clone: '-' };
+
+  const matchesBatch = transaction => {
+    const directMatch = [transaction?.batchId, transaction?.batchCode, transaction?.batchNo]
+      .filter(Boolean)
+      .some(value => identities.has(String(value).trim().toUpperCase()));
+    const rowMatch = Array.isArray(transaction?.rows) && transaction.rows.some(row =>
+      [row?.batchId, row?.batchCode, row?.batchNo]
+        .filter(Boolean)
+        .some(value => identities.has(String(value).trim().toUpperCase()))
+    );
+    return directMatch || rowMatch;
+  };
+
+  const stores = [
+    { key: 'receipt_transactions', priority: 1 },
+    { key: 'receipt_ksp_transactions', priority: 1 },
+    { key: 'seeding_transactions', priority: 2 },
+    { key: 'budding_transactions', priority: 3 },
+    { key: 'selection_transactions', priority: 4 }
+  ];
+  const transactionTimestamp = transaction => {
+    const raw = transaction.updatedAt || transaction.approvedAt || transaction.verifiedAt ||
+      transaction.completedAt || transaction.createdAt || transaction.date || transaction.tanggal || '';
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) return parsed;
+    const localDate = String(raw).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ ,T]+(\d{1,2})[:.](\d{2}))?/);
+    return localDate
+      ? new Date(Number(localDate[3]), Number(localDate[2]) - 1, Number(localDate[1]), Number(localDate[4] || 0), Number(localDate[5] || 0)).getTime()
+      : 0;
+  };
+  const candidates = stores.flatMap(({ key, priority }) => {
+    const records = storage.get(key, []);
+    return (Array.isArray(records) ? records : [])
+      .filter(transaction => {
+        const statuses = [transaction?.status, transaction?.verificationStatus, transaction?.approvalStatus]
+          .filter(Boolean)
+          .map(value => String(value).trim().toUpperCase());
+        return !transaction?.deleted && !transaction?.isDeleted &&
+          !statuses.some(status => INVALID_BATCH_TRANSACTION_STATUS.has(status)) &&
+          matchesBatch(transaction);
+      })
+      .map(transaction => ({ transaction, priority }));
+  }).sort((a, b) => {
+    return transactionTimestamp(b.transaction) - transactionTimestamp(a.transaction) || b.priority - a.priority;
+  });
+
+  const growthSource = candidates.find(({ transaction }) =>
+    transaction.growthStage || transaction.tahapanPertumbuhan || transaction.tahapan
+  )?.transaction;
+  const cloneSource = candidates.find(({ transaction }) =>
+    transaction.clone || transaction.klon || transaction.klonAwal || transaction.cloneId || transaction.cloneName
+  )?.transaction;
+
+  return {
+    growthStage: growthSource?.growthStage || growthSource?.tahapanPertumbuhan || growthSource?.tahapan || '-',
+    clone: cloneSource?.clone || cloneSource?.klon || cloneSource?.klonAwal || cloneSource?.cloneId || cloneSource?.cloneName || '-'
+  };
+}
 
 let lastStockSyncAt = null;
 
@@ -97,7 +179,9 @@ function badge(status) {
     RECOUNT_REQUIRED: ['#FEF2F2', '#DC2626', '#FECACA'],
     KOREKSI_BERLANGSUNG: ['#FEF3C7', '#B45309', '#FDE68A'],
     CORRECTED: ['#F1F5F9', '#64748B', '#CBD5E1'],
-    STOCK_CHANGED: ['#FEF2F2', '#DC2626', '#FECACA']
+    STOCK_CHANGED: ['#FEF2F2', '#DC2626', '#FECACA'],
+    MIXED: ['#FEF3C7', '#92400E', '#FCD34D'],
+    UNRESOLVED: ['#FFF7ED', '#9A3412', '#FED7AA']
   };
   const pair = colors[status] || ['#F1F5F9', '#475569', '#E2E8F0'];
   return `<span style="font-size: 0.68rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: ${pair[0]}; color: ${pair[1]}; border: 1px solid ${pair[2]}; white-space: nowrap;">${STATUS_LABEL[status] || status}</span>`;
@@ -106,11 +190,46 @@ function badge(status) {
 function resultHtml(item, bapsb = null, auditTrail = []) {
   if (!item || [PHYSICAL_STOCK_STATUS.COUNTING, PHYSICAL_STOCK_STATUS.RECOUNT_REQUIRED].includes(item.status)) return '';
   const diff = Number(item.difference || 0);
+  const diffColor = diff > 0 ? '#B45309' : diff < 0 ? '#B91C1C' : '#047857';
+  const formatQty = value => Number(value || 0).toLocaleString('id-ID');
+  const detailRows = Array.isArray(item.counts) && item.counts.some(row => row.bedenganId || row.bedenganCode)
+    ? `<section style="margin-top:12px;padding-top:11px;border-top:1px solid #E2E8F0">
+        <div style="font-size:.67rem;font-weight:800;letter-spacing:.035em;text-transform:uppercase;color:#475569;margin-bottom:7px">Rincian Bedengan</div>
+        <div style="display:flex;flex-direction:column;gap:7px">${item.counts.map(row => {
+      const rowDiff = row.difference === null || row.difference === undefined ? null : Number(row.difference);
+      const rowDiffColor = rowDiff > 0 ? '#B45309' : rowDiff < 0 ? '#B91C1C' : '#047857';
+      const isValidReference = row.referenceStatus === 'VALID';
+      const referenceLabel = isValidReference ? `${formatQty(row.referenceQty)} Pkk` : 'Belum teratribusi';
+      return `<div style="border:1px solid #E2E8F0;border-radius:8px;background:#FFFFFF;padding:8px 9px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <strong style="font-size:.72rem;color:#0F172A">${esc(row.bedenganCode || row.bedenganId || 'TOTAL BATCH')}</strong>
+              <span style="font-size:.62rem;font-weight:700;color:${isValidReference ? '#047857' : '#64748B'}">${isValidReference ? 'Referensi valid' : 'Perlu rekonsiliasi'}</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-top:7px">
+              <div><div style="font-size:.58rem;color:#64748B">Referensi</div><strong style="font-size:.66rem;color:#334155">${referenceLabel}</strong></div>
+              <div style="text-align:center"><div style="font-size:.58rem;color:#64748B">Fisik</div><strong style="font-size:.66rem;color:#0F172A">${formatQty(row.physicalQty)} Pkk</strong></div>
+              <div style="text-align:right"><div style="font-size:.58rem;color:#64748B">Selisih</div><strong style="font-size:.66rem;color:${rowDiff === null ? '#64748B' : rowDiffColor}">${rowDiff === null ? '—' : `${rowDiff > 0 ? '+' : ''}${formatQty(rowDiff)} Pkk`}</strong></div>
+            </div>
+            ${row.reason ? `<div style="margin-top:7px;padding-top:6px;border-top:1px solid #F1F5F9;font-size:.64rem;line-height:1.35;color:#475569"><span style="font-weight:700;color:#334155">Alasan:</span> ${esc(row.reason)}</div>` : ''}
+          </div>`;
+    }).join('')}</div>
+      </section>`
+    : '';
+  const reconciliation = item.reconciliationSnapshot && item.reconciliationSnapshot.unallocatedBatchBalance !== 0
+    ? `<div style="margin-top:9px;padding:8px 9px;border-radius:8px;background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:.67rem">
+          <span style="font-weight:700">Saldo Batch belum teralokasi</span>
+          <strong style="white-space:nowrap">${formatQty(item.reconciliationSnapshot.unallocatedBatchBalance)} Pkk</strong>
+        </div>
+        <div style="font-size:.61rem;line-height:1.35;margin-top:3px;color:#B45309">Nilai ini tetap dicatat pada rekonsiliasi tingkat Batch dan tidak dibebankan ke Bedengan.</div>
+      </div>`
+    : '';
 
   const surplusPill = bapsb ? `
-    <div style="margin-top:6px;padding:6px 8px;border-radius:7px;background:#FFFBEB;border:1px solid #FCD34D;display:flex;justify-content:space-between;align-items:center;font-size:.72rem">
-      <span style="color:#92400E;font-weight:700">Stok Lebih Tersendiri:</span>
-      <strong style="color:#B45309;font-size:.8rem">+${Number(bapsb.surplusQty).toLocaleString('id-ID')} Pkk</strong>
+    <div style="margin-top:8px;padding:7px 8px;border-radius:7px;background:#FFFFFF;border:1px solid #CBD5E1;font-size:.68rem">
+      <div style="font-weight:800;color:#334155;margin-bottom:5px">BA Rekonsiliasi</div>
+      <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#047857">Selisih lebih</span><strong style="color:#047857">+${Number(bapsb.totalSurplusQty || bapsb.surplusQty || 0).toLocaleString('id-ID')} Pkk</strong></div>
+      <div style="display:flex;justify-content:space-between;gap:8px;margin-top:3px"><span style="color:#B91C1C">Selisih kurang</span><strong style="color:#B91C1C">-${Number(bapsb.totalShortageQty || bapsb.shortageQty || 0).toLocaleString('id-ID')} Pkk</strong></div>
     </div>
   ` : '';
 
@@ -145,10 +264,14 @@ function resultHtml(item, bapsb = null, auditTrail = []) {
     </div>
   ` : '';
 
-  return `<div style="margin-top:7px;padding:8px;background:#F8FAFC;border-radius:8px;font-size:.76rem;color:#334155">
-    <div style="display:flex;justify-content:space-between"><span>Stok sistem saat dikunci</span><strong>${Number(item.systemQtySnapshot).toLocaleString('id-ID')} Pkk</strong></div>
-    <div style="display:flex;justify-content:space-between;margin-top:5px"><span>Hasil fisik</span><strong>${Number(item.physicalQty).toLocaleString('id-ID')} Pkk</strong></div>
-    <div style="display:flex;justify-content:space-between;margin-top:5px"><span>Selisih</span><strong>${diff > 0 ? '+' : ''}${diff.toLocaleString('id-ID')} Pkk</strong></div>
+  return `<div style="margin-top:11px;padding:10px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:9px;color:#334155">
+    <div style="font-size:.67rem;font-weight:800;letter-spacing:.035em;text-transform:uppercase;color:#475569;margin-bottom:8px">Ringkasan Pemeriksaan</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+      <div><div style="font-size:.59rem;line-height:1.25;color:#64748B">Stok sistem</div><strong style="display:block;margin-top:3px;font-size:.7rem;color:#0F172A;white-space:nowrap">${formatQty(item.systemQtySnapshot)} Pkk</strong></div>
+      <div style="text-align:center;border-left:1px solid #E2E8F0;border-right:1px solid #E2E8F0"><div style="font-size:.59rem;line-height:1.25;color:#64748B">Hasil fisik</div><strong style="display:block;margin-top:3px;font-size:.7rem;color:#0F172A;white-space:nowrap">${formatQty(item.physicalQty)} Pkk</strong></div>
+      <div style="text-align:right"><div style="font-size:.59rem;line-height:1.25;color:#64748B">Selisih</div><strong style="display:block;margin-top:3px;font-size:.7rem;color:${diffColor};white-space:nowrap">${diff > 0 ? '+' : ''}${formatQty(diff)} Pkk</strong></div>
+    </div>
+    ${detailRows}${reconciliation}
     ${surplusPill}
     ${historyExpand}
   </div>`;
@@ -168,7 +291,8 @@ function cardHtml(batch, current, currentUser) {
   const isAskep = role === ROLES.ASKEP || role === 'ASISTEN_KEPALA';
   const isPengurus = role === ROLES.PENGURUS;
 
-  const bapsb = (current?.id && status === PHYSICAL_STOCK_STATUS.SURPLUS) ? getBapsbByInspectionId(current.id) : null;
+  const discrepancyStatuses = [PHYSICAL_STOCK_STATUS.SURPLUS, PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN, PHYSICAL_STOCK_STATUS.MIXED, PHYSICAL_STOCK_STATUS.SHORTAGE_VERIFIED];
+  const bapsb = (current?.id && discrepancyStatuses.includes(status)) ? getBapsbByInspectionId(current.id) : null;
   const auditTrail = current?.id ? collectAuditTrailForInspection(current.id) : [];
 
   let badgeHtml = badge(status);
@@ -177,6 +301,12 @@ function cardHtml(batch, current, currentUser) {
       badgeHtml = '<span style="font-size: 0.68rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: #FEF3C7; color: #B45309; border: 1px solid #FDE68A; white-space: nowrap;">MENUNGGU ASKEP</span>';
     } else if (bapsb.status === BAPSB_STATUS.MENUNGGU_PENGURUS) {
       badgeHtml = '<span style="font-size: 0.68rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE; white-space: nowrap;">MENUNGGU PENGURUS</span>';
+    } else if (bapsb.status === BAPSB_STATUS.FINAL_PENDING_APPLICATION) {
+      badgeHtml = '<span style="font-size: 0.68rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE; white-space: nowrap;">MENUNGGU PENERAPAN</span>';
+    } else if (bapsb.status === BAPSB_STATUS.APPLIED) {
+      badgeHtml = '<span style="font-size: 0.68rem; font-weight: 800; padding: 3px 8px; border-radius: 4px; background: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; white-space: nowrap;">DITERAPKAN</span>';
+    } else if (bapsb.status === BAPSB_STATUS.APPLICATION_BLOCKED) {
+      badgeHtml = '<span style="font-size: 0.68rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; white-space: nowrap;">PENERAPAN DIBLOKIR</span>';
     } else if (bapsb.status === BAPSB_STATUS.FINAL) {
       badgeHtml = '<span style="font-size: 0.68rem; font-weight: 800; padding: 3px 8px; border-radius: 4px; background: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; white-space: nowrap;">Disetujui</span>';
     } else if (bapsb.status === BAPSB_STATUS.RETURNED_TO_ASB) {
@@ -186,28 +316,30 @@ function cardHtml(batch, current, currentUser) {
 
   const buttonStyle = 'flex:1;border:0;border-radius:8px;color:white;padding:9px 8px;font-size:.78rem;line-height:1.2;font-weight:800;min-height:38px;display:inline-flex;align-items:center;justify-content:center;text-align:center;box-sizing:border-box;text-decoration:none;cursor:pointer';
   let action = `<button class="psi-start" data-batch="${esc(key)}" style="${buttonStyle};background:#116834">${status === 'BELUM_DIPERIKSA' ? 'Mulai Pemeriksaan' : 'Periksa Kembali'}</button>`;
-  
+
   if (status === PHYSICAL_STOCK_STATUS.COUNTING) action = `<button class="psi-open" data-id="${esc(current.id)}" style="${buttonStyle};background:#116834">Lanjutkan Hitung</button>`;
   if (status === 'KOREKSI_BERLANGSUNG') action = `<button class="psi-open" data-id="${esc(current.id)}" style="${buttonStyle};background:#B45309">Lanjutkan Hitung</button>`;
   if (status === PHYSICAL_STOCK_STATUS.RECOUNT_REQUIRED) action = `<button class="psi-recount" data-id="${esc(current.id)}" style="${buttonStyle};background:#BE123C">Hitung Ulang</button>`;
-  
+
   if (status === PHYSICAL_STOCK_STATUS.MATCHED) {
     action = `<button class="psi-correct" data-id="${esc(current.id)}" style="${buttonStyle};background:#FFFFFF;color:#116834;border:1.5px solid #116834">Periksa Kembali</button>`;
   }
 
-  if (status === PHYSICAL_STOCK_STATUS.SURPLUS) {
+  if ([PHYSICAL_STOCK_STATUS.SURPLUS, PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN, PHYSICAL_STOCK_STATUS.MIXED, PHYSICAL_STOCK_STATUS.SHORTAGE_VERIFIED].includes(status)) {
     if (!bapsb) {
       if (isAsb) {
-        action = `<button class="psi-correct" data-id="${esc(current.id)}" style="${buttonStyle};background:#FFFFFF;color:#116834;border:1.5px solid #116834">Periksa Kembali</button><button class="psi-create-bapsb" data-id="${esc(current.id)}" style="${buttonStyle};background:#116834">Buat BA</button>`;
+        action = `<button class="psi-correct" data-id="${esc(current.id)}" style="${buttonStyle};background:#FFFFFF;color:#116834;border:1.5px solid #116834">Periksa Kembali</button><button class="psi-create-bapsb" data-id="${esc(current.id)}" style="${buttonStyle};background:#116834">Ajukan Rekonsiliasi</button>`;
       } else {
-        action = `<span style="font-size:0.72rem;color:#64748B;font-weight:600;padding:6px 0;width:100%;text-align:center">Menunggu penerbitan BA oleh Asisten</span>`;
+        action = `<span style="font-size:0.72rem;color:#64748B;font-weight:600;padding:6px 0;width:100%;text-align:center">Menunggu pengajuan BA Rekonsiliasi oleh Asisten</span>`;
       }
     } else {
       if (isAskep && bapsb.status === BAPSB_STATUS.MENUNGGU_PERSETUJUAN_ASKEP) {
         action = `<button class="psi-review-bapsb" data-bapsb="${esc(bapsb.id)}" style="${buttonStyle};background:#116834">Tinjau & Setujui BA</button>`;
       } else if (isPengurus && bapsb.status === BAPSB_STATUS.MENUNGGU_PENGURUS) {
         action = `<button class="psi-review-bapsb" data-bapsb="${esc(bapsb.id)}" style="${buttonStyle};background:#116834">Tinjau & Sahkan BA</button>`;
-      } else if (bapsb.status === BAPSB_STATUS.FINAL) {
+      } else if ([BAPSB_STATUS.FINAL_PENDING_APPLICATION, BAPSB_STATUS.APPLICATION_BLOCKED].includes(bapsb.status) && isAsb) {
+        action = `<button class="psi-view-bapsb" data-bapsb="${esc(bapsb.id)}" style="${buttonStyle};background:#FFFFFF;color:#116834;border:1.5px solid #116834">Lihat BA</button><button class="psi-open-verification" type="button" style="${buttonStyle};background:#116834">Buka Central Hub</button>`;
+      } else if ([BAPSB_STATUS.FINAL, BAPSB_STATUS.APPLIED].includes(bapsb.status)) {
         action = `<button type="button" class="psi-view-bapsb btn-print-bapb" data-bapsb="${esc(bapsb.id)}" style="${buttonStyle};background:#116834;display:inline-flex;align-items:center;justify-content:center;gap:6px">
           <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none">
             <polyline points="6 9 6 2 18 2 18 9"></polyline>
@@ -230,28 +362,32 @@ function cardHtml(batch, current, currentUser) {
     }
   }
 
-  if (status === PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN) action = `<button class="psi-correct" data-id="${esc(current.id)}" style="${buttonStyle};background:#FFFFFF;color:#B45309;border:1.5px solid #B45309">Periksa Kembali</button><button class="psi-verify" data-id="${esc(current.id)}" style="${buttonStyle};background:#B45309">Ajukan sebagai Afkir</button>`;
-  if (status === PHYSICAL_STOCK_STATUS.SHORTAGE_PENDING_VERIFICATION) action = `<button class="psi-open-verification" type="button" style="${buttonStyle};background:#116834">Buka Verifikasi</button>`;
-
-  const cullNotice = status === PHYSICAL_STOCK_STATUS.SHORTAGE_PENDING_VERIFICATION
-    ? `<div style="margin-top:7px;padding:7px 8px;border-radius:8px;background:#FFFBEB;color:#92400E;font-size:.7rem;line-height:1.4">Dokumen <strong>${esc(current.selectionDocNo || '-')}</strong> menunggu persetujuan di Verifikasi Penyeleksian. Stok sistem belum dikurangi.</div>`
-    : current?.cullSubmissionStatus === 'RETURNED'
-      ? `<div style="margin-top:7px;padding:7px 8px;border-radius:8px;background:#FFF1F2;color:#9F1239;font-size:.7rem;line-height:1.4">Pengajuan afkir dikembalikan${current.cullReturnReason ? `: ${esc(current.cullReturnReason)}` : '.'}</div>`
-      : '';
+  const cullNotice = bapsb?.status === BAPSB_STATUS.FINAL_PENDING_APPLICATION
+    ? `<div style="margin-top:9px;padding:8px 9px;border-radius:8px;background:#EFF6FF;border:1px solid #BFDBFE;color:#1E40AF;font-size:.68rem;line-height:1.4">BA telah disahkan Pengurus. Rekonsiliasi menunggu penerapan melalui Central Hub; saldo belum berubah.</div>`
+    : bapsb?.status === BAPSB_STATUS.APPLICATION_BLOCKED
+      ? `<div style="margin-top:9px;padding:8px 9px;border-radius:8px;background:#FFF1F2;border:1px solid #FECDD3;color:#9F1239;font-size:.68rem;line-height:1.4">Penerapan diblokir: ${esc(bapsb.applicationError || 'konsistensi saldo perlu diperiksa ulang.')}</div>`
+      : bapsb?.status === BAPSB_STATUS.APPLIED
+        ? `<div style="margin-top:9px;padding:8px 9px;border-radius:8px;background:#ECFDF5;border:1px solid #A7F3D0;color:#065F46;font-size:.68rem;line-height:1.4">Rekonsiliasi telah diterapkan.${bapsb.selectionDocNo ? ` Dokumen afkir: <strong>${esc(bapsb.selectionDocNo)}</strong>.` : ''}</div>`
+        : '';
 
   const ageInfo = getSeedlingAgeFromGermination(batch);
   const ageHtml = ageInfo && ageInfo.formatted && ageInfo.formatted !== '-'
-    ? `<div style="font-size:.72rem;color:#475569;margin-top:4px">Umur Bibit: <strong style="color:#0F172A">${ageInfo.weeks > 0 ? `${ageInfo.weeks} Minggu` : `${ageInfo.days} Hari`}</strong>${ageInfo.weeks > 0 ? ` <span style="font-size:.68rem;color:#64748B">(${ageInfo.days} Hari)</span>` : ''}</div>`
+    ? `<div style="font-size:.66rem;color:#64748B">Umur bibit <strong style="color:#334155">${ageInfo.weeks > 0 ? `${ageInfo.weeks} Minggu` : `${ageInfo.days} Hari`}</strong>${ageInfo.weeks > 0 ? ` <span style="color:#94A3B8">(${ageInfo.days} hari)</span>` : ''}</div>`
     : '';
 
-  return `<section style="background:white;border:1px solid #E2E8F0;border-radius:11px;padding:10px 12px;box-shadow:0 1px 4px rgba(15,23,42,.05)">
-    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
-      <div>
-        <strong style="color:#0F172A;font-size:.9rem">${esc(batch.batchCode || batch.batchNo || batch.kode || key)}</strong>
-        <div style="font-size:.7rem;color:#64748B;margin-top:2px">${esc(batch.programCode || batch.programName || 'Program Bibitan')}</div>
-        ${ageHtml}
-      </div>${badgeHtml}
-    </div>${resultHtml(current, bapsb, auditTrail)}${cullNotice}${status === PHYSICAL_STOCK_STATUS.STOCK_CHANGED ? '<div style="margin-top:7px;padding:7px 8px;border-radius:8px;background:#FFF1F2;color:#9F1239;font-size:.7rem;line-height:1.4">Saldo sistem berubah setelah pemeriksaan ini. Lakukan pemeriksaan ulang untuk memperbarui hasil.</div>' : ''}<div style="display:flex;gap:8px;width:100%;margin-top:10px">${action}</div>
+  return `<section style="background:#FFFFFF;border:1px solid #DCE3EA;border-radius:11px;padding:12px;box-shadow:0 1px 3px rgba(15,23,42,.06)">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:.6rem;font-weight:800;letter-spacing:.055em;text-transform:uppercase;color:#64748B">Batch Bibitan</div>
+        <strong style="display:block;color:#0F172A;font-size:.9rem;line-height:1.25;margin-top:2px">${esc(batch.batchCode || batch.batchNo || batch.kode || key)}</strong>
+      </div>
+      <div style="flex-shrink:0;max-width:58%;text-align:right">${badgeHtml}</div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:7px;padding-bottom:9px;border-bottom:1px solid #E2E8F0">
+      <div style="font-size:.66rem;color:#475569;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(batch.programCode || batch.programName || 'Program Bibitan')}</div>
+      ${ageHtml}
+    </div>
+    ${resultHtml(current, bapsb, auditTrail)}${cullNotice}${status === PHYSICAL_STOCK_STATUS.STOCK_CHANGED ? '<div style="margin-top:9px;padding:8px 9px;border-radius:8px;background:#FFF1F2;border:1px solid #FECDD3;color:#9F1239;font-size:.68rem;line-height:1.4">Saldo sistem berubah setelah pemeriksaan ini. Lakukan pemeriksaan ulang untuk memperbarui hasil.</div>' : ''}<div style="display:flex;gap:8px;width:100%;margin-top:11px;padding-top:10px;border-top:1px solid #E2E8F0">${action}</div>
   </section>`;
 }
 
@@ -292,32 +428,32 @@ function openAuditHistoryModal(inspectionId) {
 }
 
 function openCreateBapsbModal(inspection, currentUser, onCreated) {
-  const diff = Number(inspection.difference || 0);
+  const lines = (Array.isArray(inspection.counts) ? inspection.counts : []).filter(row => row.referenceStatus === 'VALID' && Number(row.difference) !== 0);
+  const totalSurplus = lines.filter(row => Number(row.difference) > 0).reduce((sum, row) => sum + Number(row.difference), 0);
+  const totalShortage = lines.filter(row => Number(row.difference) < 0).reduce((sum, row) => sum + Math.abs(Number(row.difference)), 0);
   const auditTrail = collectAuditTrailForInspection(inspection.id);
   const totalRounds = auditTrail.length || 1;
 
   openModal({
-    title: 'Buat Berita Acara Selisih Lebih',
+    title: 'Ajukan BA Rekonsiliasi Stok',
     isFullScreen: true,
     className: 'modal-fullscreen modal-bapsb-fullscreen',
     body: `
       <div style="max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:12px">
-        <div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;padding:10px 12px;font-size:.74rem;line-height:1.5;color:#92400E">
-          Berita Acara ini mengesahkan temuan selisih lebih fisik (+${diff.toLocaleString('id-ID')} Pkk) sebagai <strong>stok cadangan terpisah</strong>. Saldo buku sistem tetap murni dan tidak berubah.
+        <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:10px 12px;font-size:.74rem;line-height:1.5;color:#1E40AF">
+          BA ini mengajukan hasil pemeriksaan untuk persetujuan Asisten Kepala dan Pengurus. Saldo hanya berubah setelah BA final diterapkan melalui verfikasi.
         </div>
         <section style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 14px;font-size:.78rem">
           <div style="display:flex;justify-content:space-between"><span>Batch:</span><strong>${esc(inspection.batchCode || inspection.batchId)}</strong></div>
           <div style="display:flex;justify-content:space-between;margin-top:5px"><span>Stok Buku Sistem:</span><strong>${Number(inspection.systemQtySnapshot || 0).toLocaleString('id-ID')} Pkk</strong></div>
           <div style="display:flex;justify-content:space-between;margin-top:5px"><span>Hasil Fisik Lapangan:</span><strong>${Number(inspection.physicalQty || 0).toLocaleString('id-ID')} Pkk</strong></div>
-          <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #E2E8F0;padding-top:6px">
-            <span style="color:#92400E;font-weight:700">Stok Lebih Tersendiri:</span>
-            <strong style="color:#059669;font-size:.88rem">+${diff.toLocaleString('id-ID')} Pkk</strong>
-          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #E2E8F0;padding-top:6px"><span style="color:#047857;font-weight:700">Total selisih lebih:</span><strong style="color:#047857;font-size:.84rem">+${totalSurplus.toLocaleString('id-ID')} Pkk</strong></div>
+          <div style="display:flex;justify-content:space-between;margin-top:5px"><span style="color:#B91C1C;font-weight:700">Total selisih kurang:</span><strong style="color:#B91C1C;font-size:.84rem">-${totalShortage.toLocaleString('id-ID')} Pkk</strong></div>
           <div style="font-size:.68rem;color:#64748B;margin-top:4px;font-style:italic">Telah melalui ${totalRounds}x putaran sensus fisik terkonfirmasi.</div>
         </section>
         <div>
           <label style="display:block;font-size:.74rem;font-weight:700;color:#334155;margin-bottom:4px">Catatan & Justifikasi Lapangan:</label>
-          <textarea id="create-bapsb-notes" rows="3" style="width:100%;padding:10px;border:1px solid #CBD5E1;border-radius:8px;font-size:.76rem;box-sizing:border-box;line-height:1.4">Hasil sensus fisik ulang bedengan terkonfirmasi selisih lebih. Nilai kelebihan dicatat sebagai stok cadangan fisik terpisah batch dan tidak merubah saldo buku sistem.</textarea>
+          <textarea id="create-bapsb-notes" rows="3" style="width:100%;padding:10px;border:1px solid #CBD5E1;border-radius:8px;font-size:.76rem;box-sizing:border-box;line-height:1.4">Hasil pemeriksaan stok fisik telah dikonfirmasi per Bedengan dan diajukan untuk rekonsiliasi melalui persetujuan berjenjang.</textarea>
         </div>
         <div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
@@ -371,8 +507,22 @@ function renderLockConfirmation(inspection, counts, photoEvidence) {
   if (!app) return;
   const batchCode = inspection.batchCode || inspection.batchId || '-';
   const batchProgram = inspection.programCode || inspection.programName || inspection.programId || 'Program Bibitan';
+  const transactionMetadata = resolveBatchTransactionMetadata(inspection);
   const total = counts.reduce((sum, item) => sum + Number(item.physicalQty || 0), 0);
-  const rows = counts.map(item => `<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #E2E8F0"><span style="color:#64748B">${item.bedenganId ? `Bedengan ${esc(item.bedenganId)}` : 'Jumlah fisik Batch'}</span><strong>${Number(item.physicalQty).toLocaleString('id-ID')} Pkk</strong></div>`).join('');
+  const snapshotRows = Array.isArray(inspection.referenceRows) ? inspection.referenceRows : [];
+  const rows = counts.map((item, index) => {
+    const snapshot = snapshotRows.find(row => String(row.bedenganId || row.bedenganCode || '') === String(item.bedenganId || item.bedenganCode || ''));
+    const referenceQty = snapshot?.referenceStatus === 'VALID' ? Number(snapshot.referenceQty || 0) : null;
+    const difference = referenceQty === null ? null : Number(item.physicalQty || 0) - referenceQty;
+    const reasonRequired = difference !== null && difference !== 0;
+    const differenceColor = difference > 0 ? '#B45309' : difference < 0 ? '#B91C1C' : '#047857';
+    const differenceLabel = difference > 0 ? 'Selisih lebih' : difference < 0 ? 'Selisih kurang' : 'Sesuai';
+    return `<div style="padding:10px;border:1px solid #E2E8F0;border-radius:9px;background:#F8FAFC;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px"><div><div style="font-size:.72rem;color:#64748B">${item.bedenganId ? `Bedengan ${esc(item.bedenganCode || item.bedenganId)}` : 'Jumlah fisik Batch'}</div><div style="font-size:.66rem;color:#94A3B8;margin-top:2px">Hasil penghitungan lapangan</div></div><strong style="font-size:.84rem;color:#0F172A;white-space:nowrap">${Number(item.physicalQty).toLocaleString('id-ID')} Pkk</strong></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px;padding-top:8px;border-top:1px solid #E2E8F0"><div><div style="font-size:.62rem;color:#64748B">Referensi</div><strong style="font-size:.72rem;color:#334155">${referenceQty === null ? 'Belum teratribusi' : `${referenceQty.toLocaleString('id-ID')} Pkk`}</strong></div><div style="text-align:right"><div style="font-size:.62rem;color:#64748B">${difference === null ? 'Status' : differenceLabel}</div><strong style="font-size:.72rem;color:${difference === null ? '#64748B' : differenceColor}">${difference === null ? 'Perlu rekonsiliasi' : `${difference > 0 ? '+' : ''}${difference.toLocaleString('id-ID')} Pkk`}</strong></div></div>
+      ${reasonRequired ? `<label style="display:block;margin-top:9px;font-size:.68rem;font-weight:700;color:#334155">Alasan ${differenceLabel} <span style="color:#DC2626">*</span></label><textarea class="psi-confirm-reason" data-reason-index="${index}" rows="2" placeholder="Jelaskan penyebab ${differenceLabel.toLowerCase()}" style="display:block;width:100%;margin-top:5px;padding:8px 9px;border:1px solid #CBD5E1;border-radius:8px;font-size:.72rem;line-height:1.35;box-sizing:border-box;resize:vertical;background:#FFFFFF">${esc(item.reason || '')}</textarea>` : ''}
+    </div>`;
+  }).join('');
   app.innerHTML = `<div class="page" style="height:100%;display:flex;flex-direction:column;background:#F8FAFC">
     <header style="display:flex;align-items:center;height:56px;padding:0 16px;background:#FFFFFF;border-bottom:1px solid #E2E8F0;flex-shrink:0">
       <div style="display:flex;align-items:center">
@@ -385,33 +535,75 @@ function renderLockConfirmation(inspection, counts, photoEvidence) {
         <h1 style="font-size:1.05rem;font-weight:700;color:#0F172A;margin:0 0 0 6px;letter-spacing:-0.01em">Konfirmasi Nilai Fisik</h1>
       </div>
     </header>
-    <main style="flex:1;overflow:auto;padding:14px 12px"><div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:10px;font-size:.74rem;line-height:1.5;color:#92400E;margin-bottom:12px">Pastikan nilai fisik dan foto bukti sudah benar. Setelah dikunci, perubahan hanya dapat dilakukan melalui proses koreksi yang tercatat.</div><section style="background:white;border:1px solid #E2E8F0;border-radius:12px;padding:12px 14px;font-size:.8rem"><div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid #F1F5F9"><div><span style="font-size:0.68rem;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:0.02em">Batch Bibitan</span><div style="font-size:0.95rem;font-weight:800;color:#0F172A;margin-top:1px">${esc(batchCode)}</div></div>${batchProgram ? `<span style="font-size:0.72rem;font-weight:700;padding:4px 8px;border-radius:6px;background:#F1F5F9;color:#475569">${esc(batchProgram)}</span>` : ''}</div>${rows}<div style="display:flex;justify-content:space-between;padding:12px 0 2px;font-size:.9rem;border-top:1px solid #F1F5F9"><strong>Total fisik</strong><strong style="color:#116834">${total.toLocaleString('id-ID')} Pkk</strong></div></section><section style="margin-top:10px;background:white;border:1px solid #E2E8F0;border-radius:12px;padding:10px"><div style="font-size:.76rem;font-weight:800;margin-bottom:7px">Foto Bukti Bertimestamp</div><img src="${photoEvidence.image}" alt="Foto bukti pemeriksaan" style="display:block;width:100%;max-height:180px;object-fit:cover;border-radius:8px"><div style="font-size:.68rem;color:#64748B;margin-top:6px">${new Date(photoEvidence.capturedAt).toLocaleString('id-ID')} · ${photoEvidence.latitude ?? '-'}, ${photoEvidence.longitude ?? '-'}</div></section></main>
+    <main style="flex:1;overflow:auto;padding:12px"><div style="background:#FFF7ED;border:1px solid #FCD34D;border-radius:10px;padding:9px 10px;font-size:.72rem;line-height:1.45;color:#9A3412;margin-bottom:10px">Periksa kembali nilai fisik dan foto. Alasan hanya wajib diisi pada Bedengan yang memiliki selisih.</div><section style="background:white;border:1px solid #E2E8F0;border-radius:12px;padding:12px;font-size:.8rem"><div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid #F1F5F9"><div><span style="font-size:.65rem;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.02em">Batch Bibitan</span><div style="font-size:.92rem;font-weight:800;color:#0F172A;margin-top:1px">${esc(batchCode)}</div></div>${batchProgram ? `<span style="font-size:.69rem;font-weight:700;padding:4px 7px;border-radius:6px;background:#F1F5F9;color:#475569">${esc(batchProgram)}</span>` : ''}</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px"><div><div style="font-size:.6rem;color:#64748B;text-transform:uppercase;font-weight:700">Tahapan Pertumbuhan</div><div style="font-size:.7rem;font-weight:700;color:#0F172A;margin-top:2px">${esc(transactionMetadata.growthStage)}</div></div><div><div style="font-size:.6rem;color:#64748B;text-transform:uppercase;font-weight:700">Klon</div><div style="font-size:.7rem;font-weight:700;color:#0F172A;margin-top:2px">${esc(transactionMetadata.clone)}</div></div></div>${rows}<div style="display:flex;justify-content:space-between;padding:10px 2px 1px;font-size:.86rem"><strong>Total fisik</strong><strong style="color:#116834">${total.toLocaleString('id-ID')} Pkk</strong></div></section><section style="margin-top:9px;background:white;border:1px solid #E2E8F0;border-radius:12px;padding:10px"><div style="font-size:.74rem;font-weight:800;margin-bottom:7px">Foto Bukti Bertimestamp</div><img src="${photoEvidence.image}" alt="Foto bukti pemeriksaan" style="display:block;width:100%;max-height:165px;object-fit:cover;border-radius:8px"><div style="font-size:.65rem;color:#64748B;margin-top:6px">${new Date(photoEvidence.capturedAt).toLocaleString('id-ID')} · ${photoEvidence.latitude ?? '-'}, ${photoEvidence.longitude ?? '-'}</div></section></main>
     <footer style="display:flex;gap:8px;padding:10px 12px 12px;background:white;border-top:1px solid #E2E8F0"><button id="psi-confirm-edit" type="button" style="flex:1;padding:11px;border:1px solid #CBD5E1;background:white;border-radius:9px;font-weight:800">Kembali</button><button id="psi-confirm-lock" type="button" style="flex:1.25;padding:11px;border:0;background:#116834;color:white;border-radius:9px;font-weight:800">Simpan Pemeriksaan</button></footer>
   </div>`;
-  app.querySelector('#psi-confirm-back').onclick = () => renderCountForm(inspection);
-  app.querySelector('#psi-confirm-edit').onclick = () => renderCountForm(inspection);
+  const collectConfirmationCounts = () => counts.map((item, index) => ({
+    ...item,
+    reason: app.querySelector(`.psi-confirm-reason[data-reason-index="${index}"]`)?.value?.trim() || ''
+  }));
+  app.querySelector('#psi-confirm-back').onclick = () => renderCountForm(inspection, collectConfirmationCounts(), photoEvidence);
+  app.querySelector('#psi-confirm-edit').onclick = () => renderCountForm(inspection, collectConfirmationCounts(), photoEvidence);
   app.querySelector('#psi-confirm-lock').onclick = async () => {
     const user = session.get();
     try {
-      const result = await finalizePhysicalStockInspectionWithEvidence(inspection.id, counts, user, photoEvidence);
-      toast.success(result.status === PHYSICAL_STOCK_STATUS.MATCHED ? 'Pemeriksaan selesai, fisik sesuai stok sistem.' : (result.difference > 0 ? 'Pemeriksaan selesai: Terdeteksi selisih lebih.' : 'Pemeriksaan selesai: Terdeteksi selisih kurang.'));
+      const finalCounts = collectConfirmationCounts();
+      const missingReason = [...app.querySelectorAll('.psi-confirm-reason')].find(input => !input.value.trim());
+      if (missingReason) {
+        missingReason.style.borderColor = '#DC2626';
+        missingReason.focus();
+        throw new Error('Alasan wajib diisi untuk setiap Bedengan yang memiliki selisih.');
+      }
+      const result = await finalizePhysicalStockInspectionWithEvidence(inspection.id, finalCounts, user, photoEvidence);
+      const resultMessage = result.status === PHYSICAL_STOCK_STATUS.MATCHED
+        ? 'Pemeriksaan selesai, fisik sesuai stok sistem.'
+        : result.status === PHYSICAL_STOCK_STATUS.MIXED
+          ? 'Pemeriksaan selesai: ditemukan selisih lebih dan kurang antar-Bedengan.'
+          : result.status === PHYSICAL_STOCK_STATUS.SURPLUS
+            ? 'Pemeriksaan selesai: terdeteksi selisih lebih.'
+            : 'Pemeriksaan selesai: terdeteksi selisih kurang.';
+      toast.success(resultMessage);
       renderPhysicalStockInspectionLanding();
     } catch (error) { toast.error(error.message); }
   };
 }
 
-function renderCountForm(inspection) {
+function renderCountForm(inspection, draftCounts = null, draftPhotoEvidence = null) {
   const app = document.getElementById('main-content') || document.getElementById('app');
   if (!app) return;
   const user = session.get();
   const batchCode = inspection.batchCode || inspection.batchId || '-';
   const batchProgram = inspection.programCode || inspection.programName || inspection.programId || 'Program Bibitan';
-  const bedenganList = Array.isArray(inspection.bedenganIds) && inspection.bedenganIds.length ? inspection.bedenganIds : null;
+  const transactionMetadata = resolveBatchTransactionMetadata(inspection);
+  const growthStage = transactionMetadata.growthStage;
+  const clone = transactionMetadata.clone;
+  const storedReferenceRows = Array.isArray(inspection.referenceRows) ? inspection.referenceRows : [];
+  let displayRows = storedReferenceRows.filter(row => {
+    const identity = String(row?.bedenganId || row?.bedenganCode || '').trim();
+    if (!identity) return false;
+    if (identity === 'TOTAL_BATCH') return true;
+    return row.masterFound === true && row.referenceStatus !== 'RAW_ID';
+  });
+  if (!displayRows.length) displayRows = [{
+    bedenganId: null,
+    bedenganCode: 'TOTAL_BATCH',
+    masterFound: false,
+    referenceStatus: 'UNSPECIFIED'
+  }];
+  const bedenganList = displayRows.map(row => row.bedenganId || row.bedenganCode).filter(Boolean);
   const labels = bedenganList
-    ? bedenganList.map(id => `<div style="margin-bottom:12px"><label style="display:block;font-size:.76rem;color:#334155;font-weight:700;margin-bottom:4px">Bedengan ${esc(id)}</label><input type="number" min="0" step="1" required class="psi-count-input" data-bedengan="${esc(id)}" placeholder="Masukkan jumlah fisik" style="width:100%;padding:10px;border:1px solid #CBD5E1;border-radius:8px;font-size:1rem;box-sizing:border-box"></div>`).join('')
-    : `<div style="margin-bottom:12px"><label style="display:block;font-size:.76rem;color:#334155;font-weight:700;margin-bottom:4px">Jumlah fisik Batch</label><input type="number" min="0" step="1" required class="psi-count-input" data-bedengan="TOTAL_BATCH" placeholder="Masukkan total fisik" style="width:100%;padding:10px;border:1px solid #CBD5E1;border-radius:8px;font-size:1rem;box-sizing:border-box"></div>`;
+    ? displayRows.map(row => {
+      const id = row.bedenganId || row.bedenganCode;
+      const fieldLabel = id === 'TOTAL_BATCH' ? 'Jumlah fisik Batch' : `Bedengan ${row.bedenganCode || id}`;
+      const statusText = row.referenceStatus === 'VALID'
+        ? ''
+        : 'Referensi belum teratribusi';
+      const draft = Array.isArray(draftCounts) ? draftCounts.find(item => String(item.bedenganId || item.bedenganCode || '') === String(id)) : null;
+      return `<div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #F1F5F9"><label style="display:block;font-size:.76rem;color:#334155;font-weight:700;margin-bottom:4px">${esc(fieldLabel)}${statusText ? ` <span style="font-size:.62rem;color:#64748B;font-weight:600">· ${esc(statusText)}</span>` : ''}</label><input type="number" min="0" step="1" required class="psi-count-input" data-bedengan="${esc(id === 'TOTAL_BATCH' ? 'TOTAL_BATCH' : id)}" data-bedengan-code="${esc(row.bedenganCode || id)}" value="${draft ? esc(draft.physicalQty) : ''}" placeholder="Masukkan jumlah fisik" style="width:100%;padding:10px;border:1px solid #CBD5E1;border-radius:8px;font-size:1rem;box-sizing:border-box"></div>`;
+    }).join('')
+    : '';
 
-  let photoEvidence = null;
+  let photoEvidence = draftPhotoEvidence || null;
   let mediaStream = null;
 
   app.innerHTML = `<div class="page" style="height:100%;display:flex;flex-direction:column;background:#F8FAFC">
@@ -437,6 +629,10 @@ function renderCountForm(inspection) {
             </div>
             ${batchProgram ? `<span style="font-size:0.72rem;font-weight:700;padding:4px 8px;border-radius:6px;background:#F1F5F9;color:#475569">${esc(batchProgram)}</span>` : ''}
           </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:-2px 0 12px;padding-bottom:12px;border-bottom:1px solid #F1F5F9">
+            <div style="min-width:0"><div style="font-size:.61rem;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.02em">Tahapan Pertumbuhan</div><div style="margin-top:2px;font-size:.74rem;font-weight:700;color:#0F172A;line-height:1.25;overflow-wrap:anywhere">${esc(growthStage)}</div></div>
+            <div style="min-width:0"><div style="font-size:.61rem;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.02em">Klon</div><div style="margin-top:2px;font-size:.74rem;font-weight:700;color:#0F172A;line-height:1.25;overflow-wrap:anywhere">${esc(clone)}</div></div>
+          </div>
           ${labels}
         </section>
         <section style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:12px;padding:14px;margin-top:10px">
@@ -459,7 +655,7 @@ function renderCountForm(inspection) {
   </div>`;
   const returnToList = () => renderPhysicalStockInspectionLanding();
   const cancelDraft = () => {
-    try { cancelPhysicalStockDraft(inspection.id, user); } catch (_) {}
+    try { cancelPhysicalStockDraft(inspection.id, user); } catch (_) { }
     returnToList();
   };
   app.querySelector('#psi-form-back').onclick = cancelDraft;
@@ -547,7 +743,10 @@ function renderCountForm(inspection) {
   app.querySelector('#psi-count-form').onsubmit = event => {
     event.preventDefault();
     try {
-      const counts = [...app.querySelectorAll('.psi-count-input')].map(input => ({ bedenganId: input.dataset.bedengan === 'TOTAL_BATCH' ? null : input.dataset.bedengan, physicalQty: Number(input.value) }));
+      const counts = [...app.querySelectorAll('.psi-count-input')].map(input => {
+        const previous = Array.isArray(draftCounts) ? draftCounts.find(item => String(item.bedenganId || item.bedenganCode || 'TOTAL_BATCH') === String(input.dataset.bedengan || 'TOTAL_BATCH')) : null;
+        return { bedenganId: input.dataset.bedengan === 'TOTAL_BATCH' ? null : input.dataset.bedengan, bedenganCode: input.dataset.bedenganCode, physicalQty: Number(input.value), reason: previous?.reason || '' };
+      });
       if (!photoEvidence) throw new Error('Foto bukti pemeriksaan bertimestamp wajib diambil.');
       renderLockConfirmation(inspection, counts, photoEvidence);
     } catch (error) { toast.error(error.message); }
@@ -566,7 +765,11 @@ function renderBapsbApprovalCardItem(item, currentUser) {
   const isReturned = status === BAPSB_STATUS.RETURNED_TO_ASB;
 
   let badgeHtml = '';
-  if (isFinal) {
+  if (status === BAPSB_STATUS.APPLIED) {
+    badgeHtml = `<span style="font-size: 0.68rem; font-weight: 800; padding: 3px 8px; border-radius: 4px; background: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; white-space: nowrap;">DITERAPKAN</span>`;
+  } else if (status === BAPSB_STATUS.FINAL_PENDING_APPLICATION) {
+    badgeHtml = `<span style="font-size: 0.68rem; font-weight: 800; padding: 3px 8px; border-radius: 4px; background: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE; white-space: nowrap;">MENUNGGU PENERAPAN</span>`;
+  } else if (isFinal) {
     badgeHtml = `<span style="font-size: 0.68rem; font-weight: 800; padding: 3px 8px; border-radius: 4px; background: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; white-space: nowrap;">Disetujui</span>`;
   } else if (isAwaitingAskep) {
     badgeHtml = `<span style="font-size: 0.68rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: #FEF3C7; color: #B45309; border: 1px solid #FDE68A; white-space: nowrap;">MENUNGGU ASKEP</span>`;
@@ -581,8 +784,8 @@ function renderBapsbApprovalCardItem(item, currentUser) {
   let docNoDisplay = item.docNo || item.officialDocNo || '-';
   docNoDisplay = docNoDisplay.replace('/TBS/', '/TB/').replace('/DIV-1/', '/DIV-I/');
 
-  const bedenganDisplay = Array.isArray(item.bedenganIds) && item.bedenganIds.length 
-    ? item.bedenganIds.join(', ') 
+  const bedenganDisplay = Array.isArray(item.bedenganIds) && item.bedenganIds.length
+    ? item.bedenganIds.join(', ')
     : (item.bedengan || 'BED-003');
   const klonDisplay = item.klon || 'GT 1';
 
@@ -616,10 +819,9 @@ function renderBapsbApprovalCardItem(item, currentUser) {
           </div>
         </div>
         <div style="text-align: right; border-left: 1px solid #E2E8F0; padding-left: 10px;">
-          <div style="font-size: 0.64rem; font-weight: 700; color: #047857; text-transform: uppercase; line-height: 1.25;">TOTAL<br>SELISIH LEBIH</div>
-          <div style="font-size: 1.15rem; font-weight: 900; color: #047857; margin-top: 2px;">
-            +${Number(item.surplusQty || 0).toLocaleString('id-ID')} <span style="font-size: 0.72rem; font-weight: 700;">Pkk</span>
-          </div>
+          <div style="font-size: 0.64rem; font-weight: 700; color: #475569; text-transform: uppercase; line-height: 1.25;">RINGKASAN<br>REKONSILIASI</div>
+          <div style="font-size: .82rem; font-weight: 900; color: #047857; margin-top: 3px;">+${Number(item.totalSurplusQty || item.surplusQty || 0).toLocaleString('id-ID')} Pkk</div>
+          <div style="font-size: .82rem; font-weight: 900; color: #B91C1C; margin-top: 1px;">-${Number(item.totalShortageQty || item.shortageQty || 0).toLocaleString('id-ID')} Pkk</div>
         </div>
       </div>
 
@@ -710,7 +912,7 @@ function renderBapsbApprovalDashboard(app, currentUser) {
       <!-- MAIN CONTENT LIST (BAPB HARMONIZED) -->
       <main style="flex: 1; overflow-y: auto; padding: 16px;">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-          <h2 style="font-size: 0.88rem; font-weight: 700; color: #1E293B; margin: 0;">Riwayat Berita Acara Selisih Lebih</h2>
+          <h2 style="font-size: 0.88rem; font-weight: 700; color: #1E293B; margin: 0;">Berita Acara Rekonsiliasi Stok</h2>
           <span style="background: #E2E8F0; color: #475569; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;">${sortedDocs.length} Dokumen</span>
         </div>
 
@@ -728,7 +930,7 @@ function renderBapsbApprovalDashboard(app, currentUser) {
     </div>
   `;
 
-  app.querySelector('#psi-approval-back')?.addEventListener('click', () => navigate('/inspection'));
+  app.querySelector('#psi-approval-back')?.addEventListener('click', () => navigate(resolvePhysicalStockBackRoute(currentUser)));
   app.querySelector('#psi-approval-batch-history')?.addEventListener('click', () => {
     renderBatchTransactionHistoryView(app, null, () => renderBapsbApprovalDashboard(app, currentUser));
   });
@@ -750,6 +952,14 @@ function renderBapsbApprovalDashboard(app, currentUser) {
         } else if (action === 'FINALIZE_PENGURUS') {
           finalizeBapsbPengurus(bapsb.id, currentUser, payload);
           toast.success(`Berita Acara resmi disahkan secara FINAL (${bapsb.docNo}).`);
+          renderPhysicalStockInspectionLanding();
+        } else if (action === 'RETURN_ASKEP') {
+          returnBapsbAskep(bapsb.id, currentUser, payload.reason);
+          toast.success('Berita Acara dikembalikan ke Asisten Bibitan.');
+          renderPhysicalStockInspectionLanding();
+        } else if (action === 'RETURN_PENGURUS') {
+          returnBapsbPengurus(bapsb.id, currentUser, payload.reason);
+          toast.success('Berita Acara dikembalikan ke Asisten Bibitan.');
           renderPhysicalStockInspectionLanding();
         }
       } catch (err) {
@@ -796,18 +1006,18 @@ export function renderPhysicalStockInspectionLanding() {
   const latest = latestMap(inspections);
 
   app.innerHTML = `<div class="page" style="height:100%;display:flex;flex-direction:column;background:#F8FAFC">
-    <header style="height:56px;display:flex;align-items:center;gap:12px;padding:0 12px 0 16px;background:white;border-bottom:1px solid #E2E8F0;flex-shrink:0">
+    <header style="height:56px;display:flex;align-items:center;gap:8px;padding:0 12px;background:#FFFFFF;border-bottom:1px solid #E2E8F0;flex-shrink:0">
       <button id="psi-back" type="button" aria-label="Kembali" style="padding:8px;margin-left:-8px;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#116834">
         <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
           <line x1="19" y1="12" x2="5" y2="12"></line>
           <polyline points="12 19 5 12 12 5"></polyline>
         </svg>
       </button>
-      <div style="flex:1;min-width:0">
-        <h1 style="font-size:1.05rem;font-weight:700;margin:0;color:#0F172A;letter-spacing:-0.01em">Pemeriksaan Stok Fisik</h1>
+      <div style="flex:1;min-width:0;padding-left:2px">
+        <h1 style="font-size:.98rem;font-weight:700;margin:0;color:#0F172A;letter-spacing:-.01em;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Pemeriksaan Stok Fisik</h1>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <button id="psi-batch-history" type="button" aria-label="Riwayat Transaksi Batch" title="Lihat Riwayat Transaksi Batch" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:1px solid #CBD5E1;border-radius:9px;background:#FFFFFF;color:#334155;cursor:pointer">
+        <button id="psi-batch-history" type="button" aria-label="Riwayat Transaksi Batch" title="Lihat Riwayat Transaksi Batch" style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:1px solid #CBD5E1;border-radius:8px;background:#FFFFFF;color:#475569;cursor:pointer">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
             <polyline points="14 2 14 8 20 8"></polyline>
@@ -816,26 +1026,27 @@ export function renderPhysicalStockInspectionLanding() {
             <polyline points="10 9 9 9 8 9"></polyline>
           </svg>
         </button>
-        <button id="psi-sync" type="button" aria-label="Sinkronkan stok sistem" title="Sinkronkan stok sistem" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:0;border-radius:9px;background:#ECFDF3;color:#116834;cursor:pointer">
+        <button id="psi-sync" type="button" aria-label="Sinkronkan stok sistem" title="Sinkronkan stok sistem" style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:1px solid #CBD5E1;border-radius:8px;background:#FFFFFF;color:#116834;cursor:pointer">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/>
           </svg>
         </button>
       </div>
     </header>
-    <main style="flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px">
-      <div style="background:#ECFDF5;border:1px solid #A7F3D0;border-radius:10px;padding:9px 10px;font-size:.72rem;line-height:1.45;color:#065F46">
-        Stok sistem ditampilkan setelah hasil pemeriksaan fisik selesai. Selisih lebih tidak otomatis menambah stok dan akan ditindaklanjuti melalui Berita Acara (BA). Selisih kurang hanya mengurangi stok setelah diverifikasi dan disetujui sebagai Afkir/Diseleksi.
-        ${lastStockSyncAt ? `<div style="margin-top:5px;padding-top:5px;border-top:1px solid #A7F3D0;font-size:.66rem;color:#047857">Saldo sistem diperbarui ${lastStockSyncAt}</div>` : ''}
+    <main style="flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px">
+      <div style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:9px;padding:10px 11px;color:#334155">
+        <div style="font-size:.7rem;font-weight:700;margin-bottom:4px;color:#0F172A">Ketentuan pemeriksaan</div>
+        <div style="font-size:.67rem;line-height:1.5;color:#475569">Stok sistem ditampilkan setelah pemeriksaan selesai. Setiap selisih wajib melalui persetujuan Asisten Kepala dan Pengurus. Saldo berubah setelah BA Rekonsiliasi diterapkan melalui Central Hub.</div>
+        ${lastStockSyncAt ? `<div style="margin-top:7px;padding-top:6px;border-top:1px solid #E2E8F0;font-size:.63rem;color:#64748B">Pembaruan saldo terakhir: ${lastStockSyncAt}</div>` : ''}
       </div>
-      ${batches.length ? batches.map(batch => cardHtml(batch, latest.get(batch.id || batch.batchId || batch.batchCode), user)).join('') : '<div style="padding:28px;text-align:center;color:#64748B;background:white;border-radius:14px">Belum ada Batch dengan Pindah Semai terverifikasi dan saldo aktif.</div>'}
+      ${batches.length ? batches.map(batch => cardHtml(batch, latest.get(batch.id || batch.batchId || batch.batchCode), user)).join('') : '<div style="padding:26px 20px;text-align:center;color:#64748B;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;font-size:.88rem;line-height:1.5">Belum ada Batch dengan Pindah Semai terverifikasi dan saldo aktif.</div>'}
     </main>
     ${isAsb ? renderAsbBottomNav('pemeriksaan') : ''}
   </div>`;
 
   const psiBackBtn = app.querySelector('#psi-back') || app.querySelector('#btn-back');
   if (psiBackBtn) {
-    psiBackBtn.onclick = () => navigate('/inspection');
+    psiBackBtn.onclick = () => navigate(resolvePhysicalStockBackRoute(user));
   }
   if (isAsb) {
     attachAsbBottomNavEvents(app);
@@ -899,6 +1110,14 @@ export function renderPhysicalStockInspectionLanding() {
         } else if (action === 'FINALIZE_PENGURUS') {
           finalizeBapsbPengurus(bapsb.id, user, payload);
           toast.success(`Berita Acara resmi disahkan secara FINAL (${bapsb.docNo}).`);
+          renderPhysicalStockInspectionLanding();
+        } else if (action === 'RETURN_ASKEP') {
+          returnBapsbAskep(bapsb.id, user, payload.reason);
+          toast.success('Berita Acara dikembalikan ke Asisten Bibitan.');
+          renderPhysicalStockInspectionLanding();
+        } else if (action === 'RETURN_PENGURUS') {
+          returnBapsbPengurus(bapsb.id, user, payload.reason);
+          toast.success('Berita Acara dikembalikan ke Asisten Bibitan.');
           renderPhysicalStockInspectionLanding();
         }
       } catch (err) {

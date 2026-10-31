@@ -66,6 +66,100 @@ export const STOCK_MUTATION_STATUS = Object.freeze({
 export const SELECTION_STORAGE_KEY = 'selection_transactions';
 export const PRE_GRAFTING_SELECTION_DOC_STORAGE_KEY = 'pre_grafting_selection_documents';
 
+export function normalizePreGraftingSelectionStage(value) {
+  const stage = String(value || 'SELEKSI_I').trim().toUpperCase();
+  if (stage === 'SELEKSI_1' || stage === 'SELEKSI_I') return SELECTION_STAGES.SELEKSI_1;
+  if (stage === 'SELEKSI_2' || stage === 'SELEKSI_II') return SELECTION_STAGES.SELEKSI_2;
+  if (stage === 'SELEKSI_3' || stage === 'SELEKSI_III') return SELECTION_STAGES.SELEKSI_3;
+  return stage;
+}
+
+export function isSelectionDocumentFinal(doc) {
+  if (!doc) return false;
+  const status = String(doc.status || '').trim().toUpperCase();
+  const verificationStatus = String(doc.verificationStatus || '').trim().toUpperCase();
+  const approved = ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI'].includes(status) ||
+    ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI'].includes(verificationStatus);
+  return approved && (doc.isFinal === true || Boolean(doc.verifiedAt));
+}
+
+export function isSelectionRecordCorrectionRequired(record) {
+  if (!record) return false;
+  const statuses = [record.status, record.verificationStatus, record.approvalStatus]
+    .filter(Boolean)
+    .map(value => String(value).trim().toUpperCase());
+  return statuses.some(status => ['DIKEMBALIKAN', 'RETURNED', 'REVISION', 'PERLU_KOREKSI'].includes(status)) ||
+    record.correctionStatus === 'OPEN' ||
+    (Boolean(record.returnReason) && record.isCorrected !== true);
+}
+
+export function selectionDocumentRequiresCorrection(doc) {
+  if (!doc) return false;
+  if (isSelectionRecordCorrectionRequired(doc)) return true;
+  const history = Array.isArray(doc.returnedExecutionHistory) ? doc.returnedExecutionHistory : [];
+  if (history.some(item => isSelectionRecordCorrectionRequired(item) && item.correctionStatus !== 'CLOSED')) return true;
+  return getSelectionExecutionsByStage(doc).some(isSelectionRecordCorrectionRequired);
+}
+
+function resolveCorrectionLifecycleFields(parent, isComplete) {
+  if (!isComplete) return {};
+  const correctedAt = new Date().toISOString();
+  return {
+    correctionStatus: 'CLOSED',
+    correctionExecutionId: null,
+    correctionBedenganCode: null,
+    returnedExecutionHistory: (Array.isArray(parent?.returnedExecutionHistory) ? parent.returnedExecutionHistory : []).map(item => ({
+      ...item,
+      correctionStatus: 'CLOSED',
+      correctedAt: item.correctedAt || correctedAt
+    }))
+  };
+}
+
+export function getNextSelectionStage(stage) {
+  const normalized = normalizePreGraftingSelectionStage(stage);
+  if (normalized === SELECTION_STAGES.SELEKSI_1) return SELECTION_STAGES.SELEKSI_2;
+  if (normalized === SELECTION_STAGES.SELEKSI_2) return SELECTION_STAGES.SELEKSI_3;
+  return null;
+}
+
+export function getSelectionExecutionsByStage(doc) {
+  if (!doc) return [];
+  const key = doc.id || doc.docNo;
+  const stage = normalizePreGraftingSelectionStage(doc.selectionStage || doc.stage);
+  if (stage === SELECTION_STAGES.SELEKSI_2) return getSeleksi2ExecutionsByDocument(key);
+  if (stage === SELECTION_STAGES.SELEKSI_3) return getSeleksi3ExecutionsByDocument(key);
+  return getSeleksi1ExecutionsByDocument(key);
+}
+
+export function getSelectionStageCompletion(doc, executionsOverride = null) {
+  if (!doc) return { isComplete: false, progress: 0, totalInitialPolybag: 0, totalInspectedPolybag: 0, remainingPolybag: 0 };
+  const stage = normalizePreGraftingSelectionStage(doc.selectionStage || doc.stage);
+  const executions = Array.isArray(executionsOverride) ? executionsOverride : getSelectionExecutionsByStage(doc);
+  const scopes = stage === SELECTION_STAGES.SELEKSI_2
+    ? getBedenganScopeStatusForSeleksi2(doc, executions)
+    : (stage === SELECTION_STAGES.SELEKSI_3
+        ? getBedenganScopeStatusForSeleksi3(doc, executions)
+        : getBedenganScopeStatusForSeleksi1(doc, executions));
+  const totalInitialPolybag = scopes.reduce((sum, bed) => sum + (Number(bed.initialPolybag) || 0), 0);
+  const totalInspectedPolybag = scopes.reduce((sum, bed) => sum + (Number(bed.inspectedPolybag) || 0), 0);
+  const remainingPolybag = scopes.reduce((sum, bed) => sum + (Number(bed.remainingPolybag) || 0), 0);
+  const isComplete = scopes.length > 0 && totalInitialPolybag > 0 && remainingPolybag === 0 && totalInspectedPolybag >= totalInitialPolybag;
+  const progress = totalInitialPolybag > 0 ? Math.min(100, Math.round((totalInspectedPolybag / totalInitialPolybag) * 100)) : 0;
+  return { isComplete, progress, totalInitialPolybag, totalInspectedPolybag, remainingPolybag, scopes };
+}
+
+export function assertSelectionStageMutable(doc) {
+  if (!doc) throw new Error('Dokumen Seleksi Pra-Okulasi tidak ditemukan.');
+  if (isSelectionDocumentFinal(doc) && !selectionDocumentRequiresCorrection(doc)) {
+    const stage = normalizePreGraftingSelectionStage(doc.selectionStage || doc.stage).replace('SELEKSI_', 'Seleksi ');
+    const nextStage = getNextSelectionStage(doc.selectionStage || doc.stage);
+    const nextLabel = nextStage ? ` Lanjutkan melalui ${nextStage.replace('SELEKSI_', 'Seleksi ')}.` : '';
+    throw new Error(`${stage} ${doc.docNo || ''} telah disetujui final dan terkunci.${nextLabel}`.trim());
+  }
+  return true;
+}
+
 /**
  * Memvalidasi konsistensi transaksi seleksi terhadap data sumber terbaru secara dinamis.
  * Mencegah persetujuan atau eksekusi transaksi jika kuantitas afkir melebihi batas afkir pada dokumen sumber yang telah dikoreksi.
@@ -2049,6 +2143,19 @@ export function integrateSeedingToSelectionPool(seedingTx, options = {}) {
     return Math.floor(n);
   }
 
+  // Pada Pindah Semai, totalDisemai adalah populasi yang berhasil dipindahkan
+  // dan harus menjadi nilai Bibit Dipertahankan pada dokumen CULL/PS.
+  // Jangan menghitungnya dari jumlah afkir karena `ditolak` sudah berada di
+  // luar baseline stok Batch yang dibentuk dari totalDisemai.
+  const retainedQty = parseAndValidateQty(
+    seedingTx.totalDisemai ??
+    seedingTx.jumlahBibitDipindahkan ??
+    seedingTx.disemai ??
+    seedingTx.rows?.[0]?.disemai ??
+    0,
+    'Bibit Dipertahankan'
+  );
+
   // Check explicit category fields if present (for legacy data compatibility)
   let rusakQty = parseAndValidateQty(seedingTx.rusakQty ?? seedingTx.rusak, 'Rusak');
   let matiQty = parseAndValidateQty(seedingTx.matiQty ?? seedingTx.mati, 'Mati');
@@ -2090,19 +2197,51 @@ export function integrateSeedingToSelectionPool(seedingTx, options = {}) {
   const existingTxs = storage.get(SELECTION_STORAGE_KEY, []);
   const newEntries = [];
 
-  categories.forEach(({ category, qty, label }) => {
-    // Helper untuk mengecualikan transaksi pelaksanaan Seleksi I, II, III
-    const isExecutionRecord = (tx) => {
-      if (isCullDocNo(tx.docNo) || isCullDocNo(tx.selectionNo) || isCullDocNo(tx.selectionPoolDocNo)) return false;
-      return Boolean(
-        tx.parentSelectionDocumentId ||
-        tx.selectionDocumentId ||
-        tx.parentSelectionDocNo ||
-        Boolean(tx.selectionDocNo && String(tx.selectionDocNo).includes('/SEL/')) ||
-        (tx.transactionType && String(tx.transactionType).startsWith('PELAKSANAAN_SELEKSI'))
-      );
-    };
+  const isExecutionRecord = (tx) => {
+    if (isCullDocNo(tx.docNo) || isCullDocNo(tx.selectionNo) || isCullDocNo(tx.selectionPoolDocNo)) return false;
+    return Boolean(
+      tx.parentSelectionDocumentId ||
+      tx.selectionDocumentId ||
+      tx.parentSelectionDocNo ||
+      Boolean(tx.selectionDocNo && String(tx.selectionDocNo).includes('/SEL/')) ||
+      (tx.transactionType && String(tx.transactionType).startsWith('PELAKSANAAN_SELEKSI'))
+    );
+  };
 
+  const matchesSourceSeeding = item => (
+    (item.sourceDocNo === sourceDocNo || item.seedingDocNo === sourceDocNo || item.sourceTransactionId === (seedingTx.id || sourceDocNo)) &&
+    (item.sourceModule === 'PENYEMAIAN' || item.originType === 'REJECT_PENYEMAIAN')
+  );
+
+  // Self-heal data pool yang sudah terbentuk tetapi belum dideklarasikan.
+  if (retainedQty > 0) {
+    selectionPool.forEach(item => {
+      if (!matchesSourceSeeding(item)) return;
+      item.jumlahLayak = retainedQty;
+      item.actualBibitRetainedQty = retainedQty;
+      item.bibitDipertahankan = retainedQty;
+      item.updatedAt = new Date().toISOString();
+    });
+
+    // Dokumen CULL/PS yang masih pending aman untuk diselaraskan. Dokumen final
+    // tidak dimutasi; halaman Verifikasi mempunyai fallback read-only ke sumber.
+    let pendingTransactionsChanged = false;
+    existingTxs.forEach(tx => {
+      if (isExecutionRecord(tx) || !matchesSourceSeeding(tx)) return;
+      const statuses = [tx.status, tx.verificationStatus, tx.submissionStatus]
+        .map(value => String(value || '').toUpperCase());
+      const isFinal = statuses.some(status => ['DISETUJUI', 'TERVERIFIKASI', 'VERIFIED', 'APPROVED', 'FINAL'].includes(status)) || tx.isFinal === true;
+      if (isFinal) return;
+      tx.jumlahLayak = retainedQty;
+      tx.actualBibitRetainedQty = retainedQty;
+      tx.bibitDipertahankan = retainedQty;
+      tx.updatedAt = new Date().toISOString();
+      pendingTransactionsChanged = true;
+    });
+    if (pendingTransactionsChanged) storage.set(SELECTION_STORAGE_KEY, existingTxs);
+  }
+
+  categories.forEach(({ category, qty, label }) => {
     // Jika dokumen sumber sedang dikoreksi (isEditing), sinkronisasikan kuantitas pada transaksi seleksi hilir yang belum disetujui
     if (isEditing) {
       let txsChanged = false;
@@ -2115,6 +2254,9 @@ export function integrateSeedingToSelectionPool(seedingTx, options = {}) {
           tx.jumlahAfkir = qty;
           tx.quantity = qty;
           tx.jumlahDiperiksa = qty;
+          tx.jumlahLayak = retainedQty;
+          tx.actualBibitRetainedQty = retainedQty;
+          tx.bibitDipertahankan = retainedQty;
           tx.updatedAt = new Date().toISOString();
           txsChanged = true;
         }
@@ -2162,6 +2304,9 @@ export function integrateSeedingToSelectionPool(seedingTx, options = {}) {
         alasanDitolakCategory: category,
         jumlahAfkir: qty,
         quantity: qty,
+        jumlahLayak: retainedQty,
+        actualBibitRetainedQty: retainedQty,
+        bibitDipertahankan: retainedQty,
         alasan: category === 'PENDING_DECLARATION' ? `Bibit ditolak saat Penyemaian (${sourceDocNo})` : `Bibit ${label} saat Penyemaian (${sourceDocNo})`,
         
         // Actor & Scope references
@@ -2663,7 +2808,7 @@ export function createPreGraftingSelectionDocument(seedingTx, currentUser = null
     const normBatch = String(batchCode || batchId || '').trim().toUpperCase();
     const hasExistingDocForBatch = allDocs.some(d => {
       const isStage1 = (d.selectionStage === 'SELEKSI_I' || d.selectionStage === 'SELEKSI_1' || !d.selectionStage);
-      if (!isStage1 || d.isSplit || d.isLegacyAggregateSplit) return false;
+      if (!isStage1 || d.isSplit || d.isLegacyAggregateSplit || d.isSuperseded) return false;
       const dBatch = String(d.batchCode || d.batchNo || d.batchId || '').trim().toUpperCase();
       return dBatch === normBatch;
     });
@@ -2744,7 +2889,7 @@ export function createPreGraftingSelectionDocument(seedingTx, currentUser = null
     const existing = allDocs.find(d => {
       const isStage1 = (d.selectionStage === 'SELEKSI_I' || d.selectionStage === 'SELEKSI_1' || !d.selectionStage);
       if (!isStage1) return false;
-      if (d.isSplit || d.isLegacyAggregateSplit) return false;
+      if (d.isSplit || d.isLegacyAggregateSplit || d.isSuperseded) return false;
 
       const dBatchId = String(d.batchId || '').trim().toUpperCase();
       const dBatchCode = String(d.batchCode || d.batchNo || '').trim().toUpperCase();
@@ -2759,6 +2904,32 @@ export function createPreGraftingSelectionDocument(seedingTx, currentUser = null
     });
 
     if (existing) {
+      const existingExecutions = getSeleksi1ExecutionsByDocument(existing.id || existing.docNo);
+      const existingStatus = String(existing.status || '').toUpperCase();
+      const existingVerificationStatus = String(existing.verificationStatus || '').toUpperCase();
+      const isLifecycleLocked = isSelectionDocumentFinal(existing) ||
+        existingExecutions.length > 0 ||
+        existing.isCompleted === true ||
+        ['COMPLETED', 'MENUNGGU_VERIFIKASI', 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN', 'DIAJUKAN', 'DIAJUKAN_PEMERIKSAAN'].includes(existingStatus) ||
+        ['MENUNGGU_VERIFIKASI', 'TERVERIFIKASI', 'DISETUJUI'].includes(existingVerificationStatus);
+
+      // Parent yang sudah berjalan/final adalah snapshot operasional. Sinkronisasi
+      // SOW hanya boleh memperkaya provenance tanpa mengubah kuantitas, progress,
+      // status, parent ID, atau relasi transaksi anak.
+      if (isLifecycleLocked) {
+        const mergedSows = Array.from(new Set([
+          ...(existing.sourceSeedingDocNos || [existing.sourceDocNo || existing.seedingDocNo].filter(Boolean)),
+          ...allSowDocNos
+        ].filter(Boolean)));
+        if (JSON.stringify(mergedSows) !== JSON.stringify(existing.sourceSeedingDocNos || [])) {
+          existing.sourceSeedingDocNos = mergedSows;
+          existing.updatedAt = existing.updatedAt || new Date().toISOString();
+          storage.set(PRE_GRAFTING_SELECTION_DOC_STORAGE_KEY, allDocs);
+        }
+        createdDocs.push(existing);
+        return;
+      }
+
       let modified = false;
       // Perbarui kuantitas bedengan secara kumulatif dari transaksi yang disetujui ASB
       if (effectiveBedPoly > 0 && existing.sourcePolybagQty !== effectiveBedPoly) {
@@ -2910,6 +3081,10 @@ export function createPreGraftingSelectionDocument(seedingTx, currentUser = null
 export function getPreGraftingSelectionDocuments(filter = {}, currentUser = null) {
   const allDocs = storage.get(PRE_GRAFTING_SELECTION_DOC_STORAGE_KEY, []);
   let scoped = currentUser ? filterSelectionByScope(allDocs, currentUser) : allDocs;
+
+  if (!filter.includeSuperseded) {
+    scoped = scoped.filter(d => !d.isSuperseded);
+  }
 
   if (filter.selectionStage) {
     const targetStage = String(filter.selectionStage).toUpperCase();
@@ -3974,10 +4149,28 @@ export function createSelection2DocumentFromSelection1(sourceSelection1IdOrDocNo
   // memiliki pemeriksaan tidak ditimpa dan diberi tanda agar direkonsiliasi manual.
   const existingIdx = allDocs.findIndex(d =>
     (d.selectionStage === SELECTION_STAGES.SELEKSI_2 || d.selectionStage === 'SELEKSI_II' || d.selectionStage === 'SELEKSI_2') &&
-    (d.sourceSelectionDocumentId === sourceDoc.id || d.sourceSelectionDocNo === sourceDoc.docNo || d.sourceDocNo === sourceDoc.docNo)
+    !d.isSuperseded &&
+    (d.promotionKey === `${sourceDoc.id}::${SELECTION_STAGES.SELEKSI_2}` || d.sourceSelectionDocumentId === sourceDoc.id || d.sourceSelectionDocNo === sourceDoc.docNo || d.sourceDocNo === sourceDoc.docNo)
   );
   if (existingIdx !== -1) {
     const existing = allDocs[existingIdx];
+    const traceabilityPatch = {
+      promotionKey: existing.promotionKey || `${sourceDoc.id}::${SELECTION_STAGES.SELEKSI_2}`,
+      sourceFinalDocumentId: existing.sourceFinalDocumentId || sourceDoc.id,
+      sourceFinalDocumentNo: existing.sourceFinalDocumentNo || sourceDoc.docNo,
+      sourceFinalStage: existing.sourceFinalStage || SELECTION_STAGES.SELEKSI_1,
+      sourceFinalApprovedAt: existing.sourceFinalApprovedAt || sourceDoc.verifiedAt || sourceDoc.updatedAt || null,
+      sourceFinalBibitQty: existing.sourceFinalBibitQty ?? sourceBibitQty,
+      sourceFinalPolybagQty: existing.sourceFinalPolybagQty ?? sourcePolybagQty,
+      sourceFinalAfkirQty: existing.sourceFinalAfkirQty ?? Math.max(0, initialBibit - sourceBibitQty),
+      sourceFinalRows: existing.sourceFinalRows || JSON.parse(JSON.stringify(rows))
+    };
+    const needsTraceabilityPatch = Object.entries(traceabilityPatch).some(([key, value]) => existing[key] === undefined && value !== undefined);
+    if (needsTraceabilityPatch) {
+      Object.assign(existing, traceabilityPatch);
+      allDocs[existingIdx] = existing;
+      storage.set(PRE_GRAFTING_SELECTION_DOC_STORAGE_KEY, allDocs);
+    }
     const existingExecutions = getSeleksi2ExecutionsByDocument(existing.id || existing.docNo);
     const normalizeRows = value => (Array.isArray(value) ? value : []).map(row => ({
       bedenganCode: formatBedenganDisplayCode(row.bedenganCode || row.bedengan || row.bedenganId).toUpperCase(),
@@ -4064,6 +4257,15 @@ export function createSelection2DocumentFromSelection1(sourceSelection1IdOrDocNo
     sourceSelectionDocNo: sourceDoc.docNo,
     sourceFinalStatus: SELECTION_STATUS.DISETUJUI,
     sourceFinalId: sourceDoc.id,
+    promotionKey: `${sourceDoc.id}::${SELECTION_STAGES.SELEKSI_2}`,
+    sourceFinalDocumentId: sourceDoc.id,
+    sourceFinalDocumentNo: sourceDoc.docNo,
+    sourceFinalStage: SELECTION_STAGES.SELEKSI_1,
+    sourceFinalApprovedAt: sourceDoc.verifiedAt || sourceDoc.updatedAt || new Date().toISOString(),
+    sourceFinalBibitQty: sourceBibitQty,
+    sourceFinalPolybagQty: sourcePolybagQty,
+    sourceFinalAfkirQty: Math.max(0, initialBibit - sourceBibitQty),
+    sourceFinalRows: JSON.parse(JSON.stringify(rows)),
     sourceDocNo: sourceDoc.docNo,
     sourceSeedingDocNo: sourceDoc.sourceDocNo || sourceDoc.seedingDocNo || '-',
 
@@ -4311,7 +4513,8 @@ export function createSelection3DocumentFromSelection2(sourceSelection2IdOrDocNo
   // terbaru; dokumen yang sudah berjalan/final tetap dilindungi.
   const existingIdx = allDocs.findIndex(d =>
     (d.selectionStage === SELECTION_STAGES.SELEKSI_3 || d.selectionStage === 'SELEKSI_III' || d.selectionStage === 'SELEKSI_3') &&
-    (d.sourceSelectionDocumentId === sourceDoc.id || d.sourceSelectionDocNo === sourceDoc.docNo || d.sourceDocNo === sourceDoc.docNo)
+    !d.isSuperseded &&
+    (d.promotionKey === `${sourceDoc.id}::${SELECTION_STAGES.SELEKSI_3}` || d.sourceSelectionDocumentId === sourceDoc.id || d.sourceSelectionDocNo === sourceDoc.docNo || d.sourceDocNo === sourceDoc.docNo)
   );
   const existing = existingIdx >= 0 ? allDocs[existingIdx] : null;
 
@@ -4469,6 +4672,15 @@ export function createSelection3DocumentFromSelection2(sourceSelection2IdOrDocNo
     sourceSelectionDocNo: sourceDoc.docNo,
     sourceFinalStatus: SELECTION_STATUS.DISETUJUI,
     sourceFinalId: sourceDoc.id,
+    promotionKey: `${sourceDoc.id}::${SELECTION_STAGES.SELEKSI_3}`,
+    sourceFinalDocumentId: sourceDoc.id,
+    sourceFinalDocumentNo: sourceDoc.docNo,
+    sourceFinalStage: SELECTION_STAGES.SELEKSI_2,
+    sourceFinalApprovedAt: sourceDoc.verifiedAt || sourceDoc.updatedAt || new Date().toISOString(),
+    sourceFinalBibitQty: sourceBibitQty,
+    sourceFinalPolybagQty: sourcePolybagQty,
+    sourceFinalAfkirQty: Math.max(0, initialBibit - sourceBibitQty),
+    sourceFinalRows: JSON.parse(JSON.stringify(rows)),
     sourceDocNo: sourceDoc.docNo,
     sourceSelection1DocNo: sourceDoc.sourceSelectionDocNo || sourceDoc.sourceDocNo || '-',
     sourceSeedingDocNo: sourceDoc.sourceSeedingDocNo || sourceDoc.seedingDocNo || '-',
@@ -4538,6 +4750,23 @@ export function createSelection3DocumentFromSelection2(sourceSelection2IdOrDocNo
   };
 
   if (existing) {
+    const traceabilityPatch = {
+      promotionKey: existing.promotionKey || `${sourceDoc.id}::${SELECTION_STAGES.SELEKSI_3}`,
+      sourceFinalDocumentId: existing.sourceFinalDocumentId || sourceDoc.id,
+      sourceFinalDocumentNo: existing.sourceFinalDocumentNo || sourceDoc.docNo,
+      sourceFinalStage: existing.sourceFinalStage || SELECTION_STAGES.SELEKSI_2,
+      sourceFinalApprovedAt: existing.sourceFinalApprovedAt || sourceDoc.verifiedAt || sourceDoc.updatedAt || null,
+      sourceFinalBibitQty: existing.sourceFinalBibitQty ?? sourceBibitQty,
+      sourceFinalPolybagQty: existing.sourceFinalPolybagQty ?? sourcePolybagQty,
+      sourceFinalAfkirQty: existing.sourceFinalAfkirQty ?? Math.max(0, initialBibit - sourceBibitQty),
+      sourceFinalRows: existing.sourceFinalRows || JSON.parse(JSON.stringify(rows))
+    };
+    const needsTraceabilityPatch = Object.entries(traceabilityPatch).some(([key, value]) => existing[key] === undefined && value !== undefined);
+    if (needsTraceabilityPatch) {
+      Object.assign(existing, traceabilityPatch);
+      allDocs[existingIdx] = existing;
+      storage.set(PRE_GRAFTING_SELECTION_DOC_STORAGE_KEY, allDocs);
+    }
     const existingExecutions = getSeleksi3ExecutionsByDocument(existing.id || existing.docNo);
     const existingStatus = String(existing.status || '').toUpperCase();
     const hasPendingVerification = ['MENUNGGU_VERIFIKASI', 'DIAJUKAN', 'PENDING_ASB', 'READY_TO_CONFIRM'].includes(existingStatus) ||
@@ -5447,14 +5676,25 @@ export function migrateLegacyAggregateSelection1Documents() {
   const legacyDocs = allDocs.filter(d => {
     const isStage1 = (d.selectionStage === 'SELEKSI_I' || d.selectionStage === 'SELEKSI_1' || !d.selectionStage);
     if (!isStage1) return false;
-    if (d.isSplit || d.isLegacyAggregateSplit) return false;
+    if (d.isSplit || d.isLegacyAggregateSplit || d.isSuperseded || isSelectionDocumentFinal(d)) return false;
 
-    const hasMultiBedRows = Array.isArray(d.rows) && d.rows.length > 1;
-    const hasMultiBedIds = Array.isArray(d.bedenganIds) && d.bedenganIds.length > 1;
-    const hasCommaBed = typeof d.bedengan === 'string' && d.bedengan.includes(',');
-    const hasMultiSow = Array.isArray(d.sourceSeedingDocNos) && d.sourceSeedingDocNos.length > 1;
+    const uniqueBeds = new Set();
+    (Array.isArray(d.rows) ? d.rows : []).forEach(row => {
+      const raw = row?.bedenganCode || row?.bedenganId || row?.bedengan;
+      if (raw) uniqueBeds.add(formatBedenganDisplayCode(raw).toUpperCase());
+    });
+    (Array.isArray(d.bedenganIds) ? d.bedenganIds : []).forEach(raw => {
+      if (raw) uniqueBeds.add(formatBedenganDisplayCode(raw).toUpperCase());
+    });
+    if (typeof d.bedengan === 'string' && d.bedengan.includes(',')) {
+      d.bedengan.split(',').map(value => value.trim()).filter(Boolean).forEach(raw => {
+        uniqueBeds.add(formatBedenganDisplayCode(raw).toUpperCase());
+      });
+    }
 
-    return hasMultiBedRows || hasMultiBedIds || hasCommaBed || hasMultiSow;
+    // Banyak referensi SOW pada Bedengan yang sama adalah provenance, bukan
+    // dokumen agregat legacy yang perlu dipecah.
+    return uniqueBeds.size > 1;
   });
 
   if (legacyDocs.length === 0) {
@@ -5615,9 +5855,267 @@ export function migrateLegacyAggregateSelection1Documents() {
 }
 
 /**
+ * Rekonsiliasi idempoten untuk parent Seleksi I/II/III ganda yang terbentuk
+ * akibat sinkronisasi/migrasi lama. Tidak menghapus dokumen atau transaksi.
+ */
+export function reconcilePreGraftingSelectionLifecycle({ apply = true } = {}) {
+  const allDocs = storage.get(PRE_GRAFTING_SELECTION_DOC_STORAGE_KEY, []);
+  const allTxs = storage.get(SELECTION_STORAGE_KEY, []);
+  const allVerifications = storage.get('verification_transactions', []);
+  const approvedVerificationRefs = new Set();
+  const groups = new Map();
+  const diagnostics = [];
+  let docsChanged = false;
+  let txsChanged = false;
+  let verificationsChanged = false;
+
+  const getBedCode = doc => formatBedenganDisplayCode(
+    doc.bedenganCode || doc.bedenganId || doc.bedengan ||
+    (Array.isArray(doc.rows) && doc.rows[0] && (doc.rows[0].bedenganCode || doc.rows[0].bedenganId || doc.rows[0].bedengan)) ||
+    'BED-UNKNOWN'
+  ).toUpperCase();
+  const getBatchCode = doc => String(doc.batchCode || doc.batchNo || doc.batchId || 'BATCH-UNKNOWN').trim().toUpperCase();
+  const isExecution = tx => {
+    if (!tx || tx.isCullDeclaration || tx.originType === 'CULL_DECLARATION' || tx.transactionType === 'PENYELEKSIAN_BIBIT_AFKIR') return false;
+    if (isCullDocNo(tx.docNo || tx.selectionNo || tx.selectionPoolDocNo)) return false;
+    return String(tx.transactionType || '').toUpperCase().startsWith('PELAKSANAAN_SELEKSI') ||
+      [SELECTION_STAGES.SELEKSI_1, SELECTION_STAGES.SELEKSI_2, SELECTION_STAGES.SELEKSI_3].includes(normalizePreGraftingSelectionStage(tx.selectionStage || tx.stage));
+  };
+  const isApprovedExecution = tx => {
+    const status = String(tx.status || '').toUpperCase();
+    const verificationStatus = String(tx.verificationStatus || '').toUpperCase();
+    return tx.isFinal === true || ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI'].includes(status) ||
+      ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI'].includes(verificationStatus) ||
+      approvedVerificationRefs.has(String(tx.id || '')) ||
+      approvedVerificationRefs.has(String(tx.docNo || tx.selectionNo || ''));
+  };
+  const getPolybagQty = tx => {
+    const qty = Number(tx.actualPolybagInspectedQty ?? tx.polybagScope ?? tx.actualPolybagActiveQty ?? tx.initialPolybagCount ?? 0);
+    return Number.isFinite(qty) && qty > 0 ? qty : 0;
+  };
+  const getAfkirQty = tx => getRecordedBibitSelectedQty(tx);
+
+  allVerifications.forEach(record => {
+    const status = String(record.status || record.verificationStatus || record.approvalStatus || '').trim().toUpperCase();
+    if (!['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI', 'FINAL'].includes(status)) return;
+    [record.referenceId, record.referenceDocNo, record.sourceTransactionId, record.sourceDocNo]
+      .filter(Boolean)
+      .forEach(value => approvedVerificationRefs.add(String(value)));
+  });
+
+  allDocs.forEach(doc => {
+    const stage = normalizePreGraftingSelectionStage(doc.selectionStage || doc.stage);
+    if (![SELECTION_STAGES.SELEKSI_1, SELECTION_STAGES.SELEKSI_2, SELECTION_STAGES.SELEKSI_3].includes(stage)) return;
+    const key = `${stage}::${getBatchCode(doc)}::${getBedCode(doc)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(doc);
+  });
+
+  groups.forEach((docs, key) => {
+    const ids = new Set(docs.map(doc => String(doc.id || '')).filter(Boolean));
+    const docNos = new Set(docs.map(doc => String(doc.docNo || doc.selectionDocNo || '')).filter(Boolean));
+    const stage = normalizePreGraftingSelectionStage(docs[0].selectionStage || docs[0].stage);
+    const groupBatchCode = getBatchCode(docs[0]);
+    const groupBedCode = getBedCode(docs[0]);
+    const groupExecutions = allTxs.filter(tx => {
+      if (!isExecution(tx) || normalizePreGraftingSelectionStage(tx.selectionStage || tx.stage) !== stage) return false;
+      const directMatch = ids.has(String(tx.parentSelectionDocumentId || tx.selectionDocumentId || '')) ||
+        docNos.has(String(tx.parentSelectionDocNo || tx.selectionDocNo || ''));
+      if (directMatch) return true;
+
+      // Data historis dapat kehilangan relasi parent setelah proses sinkronisasi
+      // atau migrasi lama. Kombinasi tahap + Batch + Bedengan adalah identitas
+      // operasional yang stabil untuk memulihkan relasinya secara deterministik.
+      const txBatchCode = String(tx.batchCode || tx.batchNo || tx.sourceBatchCode || '').trim().toUpperCase();
+      const txBedCode = formatBedenganDisplayCode(
+        tx.bedenganCode || tx.bedenganId || tx.bedengan || 'BED-UNKNOWN'
+      ).toUpperCase();
+      return txBatchCode === groupBatchCode && txBedCode === groupBedCode;
+    });
+    const approvedExecutions = groupExecutions.filter(isApprovedExecution);
+    const anyFinalDoc = docs.find(isSelectionDocumentFinal) || null;
+    const correctionExecutions = groupExecutions.filter(isSelectionRecordCorrectionRequired);
+    const correctionVerification = allVerifications.find(record => {
+      if (!isSelectionRecordCorrectionRequired(record)) return false;
+      return ids.has(String(record.referenceId || '')) || docNos.has(String(record.referenceDocNo || ''));
+    });
+    const correctionDoc = docs.find(selectionDocumentRequiresCorrection) || null;
+    const requiresCorrection = Boolean(correctionDoc || correctionVerification || correctionExecutions.length > 0);
+    const nextStage = getNextSelectionStage(stage);
+    const hasDownstreamEvidence = Boolean(nextStage) && allDocs.some(doc => {
+      if (normalizePreGraftingSelectionStage(doc.selectionStage || doc.stage) !== nextStage) return false;
+      const sourceId = String(doc.sourceSelectionDocumentId || doc.sourceFinalId || '');
+      const sourceNo = String(doc.sourceSelectionDocNo || doc.sourceDocNo || '');
+      const promotionKey = String(doc.promotionKey || '');
+      const sameOperationalScope = getBatchCode(doc) === groupBatchCode && getBedCode(doc) === groupBedCode;
+      return ids.has(sourceId) || docNos.has(sourceNo) ||
+        [...ids].some(id => id && promotionKey.startsWith(`${id}::`)) ||
+        sameOperationalScope;
+    });
+
+    const scored = docs.map(doc => {
+      const docExecutions = groupExecutions.filter(tx =>
+        String(tx.parentSelectionDocumentId || tx.selectionDocumentId || '') === String(doc.id || '') ||
+        String(tx.parentSelectionDocNo || tx.selectionDocNo || '') === String(doc.docNo || doc.selectionDocNo || '')
+      );
+      const approvedForDoc = docExecutions.filter(isApprovedExecution);
+      const sourcePolybag = Number(doc.sourcePolybagQty || 0);
+      const approvedPolybag = approvedForDoc.reduce((sum, tx) => sum + getPolybagQty(tx), 0);
+      const approvedComplete = sourcePolybag > 0 && approvedPolybag >= sourcePolybag && approvedForDoc.length > 0;
+      let score = 0;
+      if (approvedComplete) score += 10000;
+      score += approvedPolybag;
+      if (isSelectionDocumentFinal(doc)) score += 1000;
+      if (!doc.isSplit && !doc.isLegacyAggregateSplit && !doc.isSuperseded) score += 2000;
+      if (docExecutions.length > 0) score += 100;
+      if (!doc.isSuperseded) score += 10;
+      return { doc, docExecutions, approvedForDoc, approvedPolybag, approvedComplete, score };
+    }).sort((a, b) => b.score - a.score || String(a.doc.createdAt || '').localeCompare(String(b.doc.createdAt || '')));
+
+    const selected = scored[0];
+    if (!selected || (!anyFinalDoc && approvedExecutions.length === 0 && !hasDownstreamEvidence)) return;
+    const canonical = selected.doc;
+    const canonicalId = canonical.id;
+    const canonicalDocNo = canonical.docNo || canonical.selectionDocNo;
+    const sourcePolybag = Number(canonical.sourcePolybagQty || anyFinalDoc?.sourcePolybagQty || 0);
+    // Dokumen tahap berikutnya hanya mungkin terbentuk setelah tahap sumber
+    // disetujui. Untuk data legacy yang kehilangan status child, keberadaan
+    // downstream menjadi bukti final yang sah untuk memulihkan sesi sumber.
+    const lifecycleCandidates = (approvedExecutions.length > 0
+      ? approvedExecutions
+      : ((anyFinalDoc || hasDownstreamEvidence) ? groupExecutions : []))
+      .filter(tx => !isSelectionRecordCorrectionRequired(tx));
+    const orderedApprovedExecutions = [...lifecycleCandidates].sort((a, b) => {
+      const aTime = Date.parse(a.verifiedAt || a.approvedAt || a.updatedAt || a.createdAt || '') || 0;
+      const bTime = Date.parse(b.verifiedAt || b.approvedAt || b.updatedAt || b.createdAt || '') || 0;
+      return aTime - bTime || String(a.docNo || a.id || '').localeCompare(String(b.docNo || b.id || ''));
+    });
+    const lifecycleApprovedExecutions = [];
+    let approvedPolybag = 0;
+    for (const tx of orderedApprovedExecutions) {
+      if (sourcePolybag > 0 && approvedPolybag >= sourcePolybag) break;
+      lifecycleApprovedExecutions.push(tx);
+      approvedPolybag += getPolybagQty(tx);
+    }
+    const approvedAfkir = lifecycleApprovedExecutions.reduce((sum, tx) => sum + getAfkirQty(tx), 0);
+    const sourceBibit = Number(canonical.sourceBibitQty || anyFinalDoc?.sourceBibitQty || 0);
+    const hasFinalEvidence = approvedExecutions.length > 0 || Boolean(anyFinalDoc) || hasDownstreamEvidence;
+    const canRestoreFinal = !requiresCorrection && hasFinalEvidence && lifecycleApprovedExecutions.length > 0 && sourcePolybag > 0 && approvedPolybag >= sourcePolybag;
+
+    diagnostics.push({ key, canonicalId, duplicateIds: docs.filter(doc => doc !== canonical).map(doc => doc.id), canRestoreFinal });
+    if (!apply) return;
+
+    canonical.isSuperseded = false;
+    canonical.supersededByDocumentId = null;
+    if (requiresCorrection) {
+      const correctionSource = correctionDoc || correctionVerification || correctionExecutions[0] || {};
+      canonical.status = SELECTION_STATUS.DIKEMBALIKAN;
+      canonical.verificationStatus = 'DIKEMBALIKAN';
+      canonical.isFinal = false;
+      canonical.returnReason = correctionSource.returnReason || canonical.returnReason || 'Transaksi memerlukan koreksi.';
+      canonical.correctionStatus = 'OPEN';
+    } else if (canRestoreFinal) {
+      canonical.status = SELECTION_STATUS.DISETUJUI;
+      canonical.isFinal = true;
+      canonical.isCompleted = true;
+      canonical.verificationStatus = anyFinalDoc?.verificationStatus || 'TERVERIFIKASI';
+      canonical.verifiedAt = canonical.verifiedAt || anyFinalDoc?.verifiedAt || new Date().toISOString();
+      canonical.verifiedByUserId = canonical.verifiedByUserId || anyFinalDoc?.verifiedByUserId || null;
+      canonical.verifiedByName = canonical.verifiedByName || anyFinalDoc?.verifiedByName || null;
+      canonical.executionTransactionIds = lifecycleApprovedExecutions.map(tx => tx.id);
+      canonical.executionCount = lifecycleApprovedExecutions.length;
+      canonical.totalDiperiksa = approvedPolybag;
+      canonical.totalPolybagDiperiksa = approvedPolybag;
+      canonical.totalAfkir = approvedAfkir;
+      canonical.totalBibitDiseleksi = approvedAfkir;
+      canonical.totalLayak = Math.max(0, sourceBibit - approvedAfkir);
+      canonical.totalBibitRetainedQty = Math.max(0, sourceBibit - approvedAfkir);
+      canonical.remainingPolybag = 0;
+      canonical.sisaPolybag = 0;
+      canonical.progress = 100;
+      if ((Array.isArray(canonical.rows) ? canonical.rows : []).length <= 1) {
+        canonical.isSplit = false;
+        canonical.isLegacyAggregateSplit = false;
+      }
+    }
+    docsChanged = true;
+
+    docs.forEach(doc => {
+      if (doc === canonical) return;
+      if (!doc.isSuperseded || doc.supersededByDocumentId !== canonicalId) {
+        doc.isSuperseded = true;
+        doc.supersededByDocumentId = canonicalId;
+        doc.supersededAt = doc.supersededAt || new Date().toISOString();
+        docsChanged = true;
+      }
+    });
+
+    lifecycleApprovedExecutions.forEach(tx => {
+      tx.parentSelectionDocumentId = canonicalId;
+      tx.selectionDocumentId = canonicalId;
+      tx.parentSelectionDocNo = canonicalDocNo;
+      tx.selectionDocNo = canonicalDocNo;
+      tx.status = SELECTION_STATUS.DISETUJUI;
+      tx.verificationStatus = 'TERVERIFIKASI';
+      tx.isFinal = true;
+      tx.isSuperseded = false;
+      txsChanged = true;
+    });
+
+    correctionExecutions.forEach(tx => {
+      tx.parentSelectionDocumentId = canonicalId;
+      tx.selectionDocumentId = canonicalId;
+      tx.parentSelectionDocNo = canonicalDocNo;
+      tx.selectionDocNo = canonicalDocNo;
+      tx.isSuperseded = false;
+      txsChanged = true;
+    });
+
+    if (canRestoreFinal) {
+      const retainedIds = new Set(lifecycleApprovedExecutions.map(tx => String(tx.id || tx.docNo || '')));
+      groupExecutions.filter(tx => !retainedIds.has(String(tx.id || tx.docNo || ''))).forEach(tx => {
+        tx.isSuperseded = true;
+        tx.supersededReason = 'POST_FINAL_DUPLICATE';
+        tx.supersededByDocumentId = canonicalId;
+        txsChanged = true;
+      });
+    }
+
+    const duplicateIds = new Set(docs.filter(doc => doc !== canonical).map(doc => String(doc.id || '')).filter(Boolean));
+    const duplicateDocNos = new Set(docs.filter(doc => doc !== canonical).map(doc => String(doc.docNo || doc.selectionDocNo || '')).filter(Boolean));
+    allDocs.forEach(doc => {
+      if (duplicateIds.has(String(doc.sourceSelectionDocumentId || doc.sourceFinalId || '')) ||
+          duplicateDocNos.has(String(doc.sourceSelectionDocNo || doc.sourceDocNo || ''))) {
+        doc.sourceSelectionDocumentId = canonicalId;
+        doc.sourceFinalId = canonicalId;
+        doc.sourceSelectionDocNo = canonicalDocNo;
+        doc.sourceDocNo = canonicalDocNo;
+        docsChanged = true;
+      }
+    });
+    allVerifications.forEach(record => {
+      if (duplicateIds.has(String(record.referenceId || '')) || duplicateDocNos.has(String(record.referenceDocNo || ''))) {
+        record.referenceId = canonicalId;
+        record.referenceDocNo = canonicalDocNo;
+        verificationsChanged = true;
+      }
+    });
+  });
+
+  if (apply && docsChanged) storage.set(PRE_GRAFTING_SELECTION_DOC_STORAGE_KEY, allDocs);
+  if (apply && txsChanged) storage.set(SELECTION_STORAGE_KEY, allTxs);
+  if (apply && verificationsChanged) storage.set('verification_transactions', allVerifications);
+  return { groupsReviewed: groups.size, reconciledGroups: diagnostics.length, diagnostics, applied: apply };
+}
+
+/**
  * Sinkronisasi seluruh transaksi penyemaian ke Dokumen Seleksi Pra-Okulasi secara idempoten
  */
 export function syncAllSeedingsToPreGraftingSelectionDocuments(currentUser = null) {
+  // Pulihkan relasi parent yang pernah terpecah oleh migrasi lama sebelum
+  // melakukan sinkronisasi baru. Fungsi ini idempoten dan tidak menghapus audit.
+  reconcilePreGraftingSelectionLifecycle({ apply: true });
+
   // Lakukan auto-migrasi dokumen legacy agregat jika ada
   try {
     migrateLegacyAggregateSelection1Documents();
@@ -5721,7 +6219,7 @@ export function syncAllApprovedPreGraftingSelectionDocuments(currentUser = null)
     const isApproved = String(doc.status || '').toUpperCase() === SELECTION_STATUS.DISETUJUI ||
                        String(doc.verificationStatus || '').toUpperCase() === 'TERVERIFIKASI' ||
                        String(doc.status || '').toUpperCase() === 'TERVERIFIKASI';
-    const isFinal = Boolean(doc.isFinal) || isApproved;
+    const isFinal = isSelectionDocumentFinal(doc);
 
     if (isApproved && isFinal) {
       try {
@@ -5777,7 +6275,7 @@ export function syncAllApprovedPreGraftingSelectionDocuments(currentUser = null)
     const isApproved = String(doc.status || '').toUpperCase() === SELECTION_STATUS.DISETUJUI ||
                        String(doc.verificationStatus || '').toUpperCase() === 'TERVERIFIKASI' ||
                        String(doc.status || '').toUpperCase() === 'TERVERIFIKASI';
-    const isFinal = Boolean(doc.isFinal) || isApproved;
+    const isFinal = isSelectionDocumentFinal(doc);
 
     if (isApproved && isFinal) {
       try {
@@ -5807,6 +6305,7 @@ export function getSeleksi1ExecutionsByDocument(idOrDocNo) {
   const allTxs = storage.get(SELECTION_STORAGE_KEY, []);
   
   return allTxs.filter(tx => {
+    if (tx.isSuperseded) return false;
     // STRATEGI 5-A: Pemisahan deklarasi CULL dari pemeriksaan fisik biasa
     if (isCullDocNo(tx.docNo) || isCullDocNo(tx.selectionNo) || isCullDocNo(tx.selectionPoolDocNo)) return false;
     if (tx.originType === 'CULL_DECLARATION' || tx.isCullDeclaration || tx.transactionType === 'PENYELEKSIAN_BIBIT_AFKIR') return false;
@@ -6423,6 +6922,8 @@ export function createSeleksi1ExecutionTransaction(payload, currentUser, options
     throw new Error(`Dokumen Seleksi Pra-Okulasi dengan identitas "${parentDocId}" tidak ditemukan.`);
   }
 
+  assertSelectionStageMutable(parentDoc);
+
   // DEFENSE GATE: Validasi apakah SOW sumber Dokumen Seleksi I ini eligible (CULL approved dan ASB approved)
   const gateCheck = canPerformPreGraftingSelection1(parentDoc, payload.bedenganCode || payload.bedenganId || payload.bedengan);
   if (!gateCheck.canPerform) {
@@ -6433,6 +6934,34 @@ export function createSeleksi1ExecutionTransaction(payload, currentUser, options
   assertAttendanceGateOrThrow(currentUser);
 
   const existingExecutions = getSeleksi1ExecutionsByDocument(parentDoc.id);
+
+  // HARD COMPLETION GUARD:
+  // UI dapat tetap terbuka setelah transaksi terakhir disimpan. Pastikan layanan
+  // selalu menghitung ulang saldo dari transaksi tersimpan dan menolak transaksi
+  // baru ketika seluruh scope Dokumen Seleksi I sudah habis.
+  const parentSourcePolybag = parseInt(parentDoc.sourcePolybagQty || 0, 10);
+  const parentInspectedPolybag = existingExecutions.reduce((sum, tx) => {
+    const qty = parseInt(
+      tx.actualPolybagInspectedQty !== undefined
+        ? tx.actualPolybagInspectedQty
+        : (tx.polybagScope !== undefined
+            ? tx.polybagScope
+            : (tx.actualPolybagActiveQty !== undefined
+                ? tx.actualPolybagActiveQty
+                : (tx.initialPolybagCount || 0))),
+      10
+    );
+    return sum + (Number.isFinite(qty) ? qty : 0);
+  }, 0);
+
+  if (
+    existingExecutions.length > 0 &&
+    parentSourcePolybag > 0 &&
+    parentInspectedPolybag >= parentSourcePolybag
+  ) {
+    throw new Error(`Pemeriksaan Seleksi I ${parentDoc.docNo || ''} telah mencapai 100%. Tidak dapat menambah transaksi baru.`.trim());
+  }
+
   const val = validateSeleksi1Execution(payload, parentDoc, existingExecutions, options);
   if (!val.isValid) {
     throw new Error(val.errors.join(' '));
@@ -6634,6 +7163,7 @@ export function createSeleksi1ExecutionTransaction(payload, currentUser, options
       verificationStatus: isAllPolybagChecked ? null : currentParent.verificationStatus,
       returnReason: isAllPolybagChecked ? null : currentParent.returnReason,
       isCorrected: isAllPolybagChecked ? true : Boolean(currentParent.isCorrected),
+      ...resolveCorrectionLifecycleFields(currentParent, isAllPolybagChecked),
       updatedAt: new Date().toISOString()
     };
 
@@ -6831,6 +7361,7 @@ export function getSeleksi2ExecutionsByDocument(idOrDocNo) {
   const allTxs = storage.get(SELECTION_STORAGE_KEY, []);
   
   return allTxs.filter(tx => {
+    if (tx.isSuperseded) return false;
     // STRATEGI 5-A: Pemisahan deklarasi CULL dari pemeriksaan fisik biasa
     if (isCullDocNo(tx.docNo) || isCullDocNo(tx.selectionNo) || isCullDocNo(tx.selectionPoolDocNo)) return false;
     if (tx.originType === 'CULL_DECLARATION' || tx.isCullDeclaration || tx.transactionType === 'PENYELEKSIAN_BIBIT_AFKIR') return false;
@@ -7209,14 +7740,16 @@ export function createSeleksi2ExecutionTransaction(payload, currentUser, options
     }
   }
 
-  // GLOBAL ATTENDANCE GATE
-  assertAttendanceGateOrThrow(currentUser);
-
   const parentDocId = payload.selectionDocumentId || payload.selectionDocNo || payload.docNo;
   const parentDoc = getPreGraftingSelectionDocumentById(parentDocId);
   if (!parentDoc) {
     throw new Error(`Dokumen Seleksi II dengan identitas "${parentDocId}" tidak ditemukan.`);
   }
+
+  assertSelectionStageMutable(parentDoc);
+
+  // GLOBAL ATTENDANCE GATE
+  assertAttendanceGateOrThrow(currentUser);
 
   const existingExecutions = getSeleksi2ExecutionsByDocument(parentDoc.id);
   const val = validateSeleksi2Execution(payload, parentDoc, existingExecutions, options);
@@ -7421,6 +7954,7 @@ export function createSeleksi2ExecutionTransaction(payload, currentUser, options
       verificationStatus: isAllPolybagChecked ? null : currentParent.verificationStatus,
       returnReason: isAllPolybagChecked ? null : currentParent.returnReason,
       isCorrected: isAllPolybagChecked ? true : Boolean(currentParent.isCorrected),
+      ...resolveCorrectionLifecycleFields(currentParent, isAllPolybagChecked),
       updatedAt: new Date().toISOString()
     };
 
@@ -7609,6 +8143,7 @@ export function getSeleksi3ExecutionsByDocument(idOrDocNo) {
   const searchStr = String(idOrDocNo).trim();
   
   return allTxs.filter(tx => {
+    if (tx.isSuperseded) return false;
     // STRATEGI 5-A: Pemisahan deklarasi CULL dari pemeriksaan fisik biasa
     if (isCullDocNo(tx.docNo) || isCullDocNo(tx.selectionNo) || isCullDocNo(tx.selectionPoolDocNo)) return false;
     if (tx.originType === 'CULL_DECLARATION' || tx.isCullDeclaration || tx.transactionType === 'PENYELEKSIAN_BIBIT_AFKIR') return false;
@@ -7919,14 +8454,16 @@ export function createSeleksi3ExecutionTransaction(payload, currentUser, options
     }
   }
 
-  // GLOBAL ATTENDANCE GATE
-  assertAttendanceGateOrThrow(currentUser);
-
   const parentDocId = payload.parentDocId || payload.selectionDocumentId || payload.selectionDocNo || payload.parentSelectionDocumentId || payload.docNo;
   const parentDoc = getPreGraftingSelectionDocumentById(parentDocId);
   if (!parentDoc) {
     throw new Error(`Dokumen Seleksi III dengan identitas "${parentDocId}" tidak ditemukan.`);
   }
+
+  assertSelectionStageMutable(parentDoc);
+
+  // GLOBAL ATTENDANCE GATE
+  assertAttendanceGateOrThrow(currentUser);
 
   const existingExecutions = getSeleksi3ExecutionsByDocument(parentDoc.id);
   const val = validateSeleksi3Execution(payload, parentDoc, existingExecutions, options);
@@ -8132,6 +8669,7 @@ export function createSeleksi3ExecutionTransaction(payload, currentUser, options
       verificationStatus: isAllPolybagChecked ? null : currentParent.verificationStatus,
       returnReason: isAllPolybagChecked ? null : currentParent.returnReason,
       isCorrected: isAllPolybagChecked ? true : Boolean(currentParent.isCorrected),
+      ...resolveCorrectionLifecycleFields(currentParent, isAllPolybagChecked),
       updatedAt: new Date().toISOString()
     };
 

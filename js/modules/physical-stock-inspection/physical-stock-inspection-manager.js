@@ -7,6 +7,12 @@ import {
 import { normalizeRole, ROLES } from '../../core/user-context.js';
 import { photoRepository } from '../../db/repositories.js';
 import { formatCullDocNo } from '../../core/utils.js';
+import {
+  resolvePhysicalStockBedReference,
+  REFERENCE_STATUS,
+  RECONCILIATION_STATUS,
+  isApprovalEligibleReference
+} from './physical-stock-bed-reference-service.js';
 
 export const PHYSICAL_STOCK_STORAGE_KEY = 'physical_stock_inspections';
 export const PHYSICAL_STOCK_CULL_KEY = 'physical_stock_cull_verifications';
@@ -20,7 +26,9 @@ export const PHYSICAL_STOCK_STATUS = Object.freeze({
   SHORTAGE_PENDING_VERIFICATION: 'SHORTAGE_PENDING_VERIFICATION',
   SHORTAGE_VERIFIED: 'SHORTAGE_VERIFIED',
   CORRECTED: 'CORRECTED',
-  STOCK_CHANGED: 'STOCK_CHANGED'
+  STOCK_CHANGED: 'STOCK_CHANGED',
+  MIXED: 'MIXED',
+  UNRESOLVED: 'UNRESOLVED'
 });
 
 function isPhysicalStockViewer(user) {
@@ -87,11 +95,18 @@ function ledgerFingerprint(batch) {
   return `${getAvailableQty(batch.id || batch.batchId || batch.batchCode)}|${entries.join('|')}`;
 }
 
+export function getPhysicalStockLedgerFingerprint(batchIdOrCode) {
+  const batch = getAllBatches().find(item => identities(item).has(String(batchIdOrCode || '').trim()));
+  return batch ? ledgerFingerprint(batch) : null;
+}
+
 export function isPhysicalStockInspectionStale(inspection) {
   if (!inspection || ![
     PHYSICAL_STOCK_STATUS.MATCHED,
     PHYSICAL_STOCK_STATUS.SURPLUS,
-    PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN
+    PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN,
+    PHYSICAL_STOCK_STATUS.MIXED,
+    PHYSICAL_STOCK_STATUS.UNRESOLVED
   ].includes(inspection.status) || inspection.stockMutationStatus === 'APPLIED') return false;
   const batch = getAllBatches().find(item => identities(item).has(String(inspection.batchId)));
   return !batch || ledgerFingerprint(batch) !== inspection.ledgerFingerprint;
@@ -179,7 +194,10 @@ export function getEligiblePhysicalStockBatches(user) {
   assertAssistant(user);
   return getAllBatches().filter(batch => {
     const key = batch.id || batch.batchId || batch.batchCode;
-    return inUserScope(batch, user) && hasApprovedPindahSemai(batch) && getAvailableQty(key) > 0;
+    // Pindah Semai approved tetap menjadi provenance utama, tetapi bukan lagi
+    // prasyarat pencatatan fakta. Pengesahan ditahan oleh resolver saat provenance
+    // atau rekonsiliasi belum valid.
+    return inUserScope(batch, user) && getAvailableQty(key) > 0;
   }).map(batch => ({
     ...batch,
     physicalStockStatus: latestForBatch(batch.id || batch.batchId || batch.batchCode)?.status || 'BELUM_DIPERIKSA'
@@ -195,7 +213,6 @@ export function startPhysicalStockInspection(batchId, user) {
   assertAssistantOnly(user);
   const batch = getAllBatches().find(item => identities(item).has(String(batchId).trim()));
   if (!batch || !inUserScope(batch, user)) throw new Error('Batch tidak ditemukan atau berada di luar lingkup Anda.');
-  if (!hasApprovedPindahSemai(batch)) throw new Error('Batch belum memiliki Pindah Semai yang disetujui.');
 
   const all = storage.get(PHYSICAL_STOCK_STORAGE_KEY, []);
   const key = batch.id || batch.batchId || batch.batchCode;
@@ -203,6 +220,14 @@ export function startPhysicalStockInspection(batchId, user) {
   if (active) return { ...active };
 
   const now = new Date().toISOString();
+  // Sync the existing official balance first so the resolver snapshots the
+  // same ledger state that the legacy module exposes to the user.
+  const systemQtySnapshot = getAvailableQty(key);
+  const reference = resolvePhysicalStockBedReference(batch);
+  const referenceRows = reference?.referenceRows || [];
+  const bedenganIds = referenceRows
+    .map(row => row.bedenganId)
+    .filter(Boolean);
   const record = {
     id: `PSI-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
     docNo: `PSF/${new Date().getFullYear()}/${String(all.length + 1).padStart(5, '0')}`,
@@ -211,9 +236,17 @@ export function startPhysicalStockInspection(batchId, user) {
     programId: batch.programId || null,
     estateId: batch.estateId || user.estateId || null,
     divisionId: batch.divisionId || user.divisionId || null,
-    bedenganIds: Array.isArray(batch.bedenganIds) ? [...batch.bedenganIds] : [],
+    bedenganIds: bedenganIds.length ? bedenganIds : (Array.isArray(batch.bedenganIds) ? [...batch.bedenganIds] : []),
     status: PHYSICAL_STOCK_STATUS.COUNTING,
-    systemQtySnapshot: getAvailableQty(key),
+    systemQtySnapshot,
+    referenceSnapshot: JSON.parse(JSON.stringify(reference || null)),
+    referenceRows: JSON.parse(JSON.stringify(referenceRows)),
+    reconciliationSnapshot: reference ? {
+      officialBatchBalance: reference.officialBatchBalance,
+      attributedBedenganReferenceTotal: reference.attributedBedenganReferenceTotal,
+      unallocatedBatchBalance: reference.unallocatedBatchBalance,
+      reconciliationStatus: reference.reconciliationStatus
+    } : null,
     ledgerFingerprint: ledgerFingerprint(batch),
     attempt: (latestForBatch(key)?.attempt || 0) + 1,
     createdAt: now,
@@ -235,10 +268,30 @@ export function finalizePhysicalStockInspection(inspectionId, counts, user, phot
     return { ...target };
   }
 
-  const rows = Array.isArray(counts) ? counts.map(row => ({
-    bedenganId: row.bedenganId || null,
-    physicalQty: Number(row.physicalQty)
-  })) : [{ bedenganId: null, physicalQty: Number(counts) }];
+  const inputRows = Array.isArray(counts) ? counts : [{ bedenganId: null, physicalQty: Number(counts) }];
+  const snapshotRows = Array.isArray(target.referenceRows) ? target.referenceRows : [];
+  const rows = inputRows.map(row => {
+    const bedenganId = row.bedenganId || null;
+    const snapshot = snapshotRows.find(item =>
+      (bedenganId && (String(item.bedenganId || '') === String(bedenganId) || String(item.bedenganCode || '') === String(bedenganId))) ||
+      (!bedenganId && item.bedenganCode === 'TOTAL_BATCH')
+    );
+    const referenceStatus = row.referenceStatus || snapshot?.referenceStatus || (snapshotRows.length ? REFERENCE_STATUS.UNSPECIFIED : null);
+    const referenceQty = referenceStatus === REFERENCE_STATUS.VALID
+      ? Number(row.referenceQty ?? snapshot?.referenceQty ?? 0)
+      : null;
+    const physicalQty = Number(row.physicalQty);
+    return {
+      bedenganId,
+      bedenganCode: row.bedenganCode || snapshot?.bedenganCode || (bedenganId ? bedenganId : 'TOTAL_BATCH'),
+      referenceQty,
+      referenceStatus,
+      physicalQty,
+      difference: referenceStatus === REFERENCE_STATUS.VALID ? physicalQty - referenceQty : null,
+      reason: typeof row.reason === 'string' ? row.reason.trim() : '',
+      provenance: row.provenance || snapshot?.provenance || { seeding: [], selection: [] }
+    };
+  });
   if (!rows.length || rows.some(row => !Number.isInteger(row.physicalQty) || row.physicalQty < 0)) {
     throw new Error('Jumlah fisik wajib berupa bilangan bulat nol atau lebih.');
   }
@@ -257,6 +310,13 @@ export function finalizePhysicalStockInspection(inspectionId, counts, user, phot
     throw new Error('Saldo sistem berubah saat penghitungan. Pemeriksaan harus dihitung ulang.');
   }
 
+  const validRows = rows.filter(row => row.referenceStatus === REFERENCE_STATUS.VALID);
+  const hasUnresolvedRows = rows.some(row => row.referenceStatus !== REFERENCE_STATUS.VALID);
+  rows.forEach(row => {
+    if (row.referenceStatus === REFERENCE_STATUS.VALID && row.difference !== 0 && !row.reason) {
+      throw new Error(`Alasan wajib diisi untuk ${row.bedenganCode || 'Bedengan'} yang memiliki selisih.`);
+    }
+  });
   const physicalQty = rows.reduce((sum, row) => sum + row.physicalQty, 0);
   const difference = physicalQty - target.systemQtySnapshot;
   target.counts = rows;
@@ -267,7 +327,23 @@ export function finalizePhysicalStockInspection(inspectionId, counts, user, phot
   }
   target.physicalQty = physicalQty;
   target.difference = difference;
-  target.status = difference === 0 ? PHYSICAL_STOCK_STATUS.MATCHED : (difference > 0 ? PHYSICAL_STOCK_STATUS.SURPLUS : PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN);
+  const rowDiffs = validRows.map(row => Number(row.difference || 0));
+  let differenceProfile = null;
+  if (!snapshotRows.length) {
+    differenceProfile = difference === 0 ? 'MATCHED' : (difference > 0 ? 'SURPLUS' : 'SHORTAGE');
+  } else if (hasUnresolvedRows || !isApprovalEligibleReference(target.referenceSnapshot)) {
+    differenceProfile = 'UNRESOLVED';
+  } else {
+    const hasPositive = rowDiffs.some(value => value > 0);
+    const hasNegative = rowDiffs.some(value => value < 0);
+    differenceProfile = hasPositive && hasNegative ? 'MIXED' : hasPositive ? 'SURPLUS' : hasNegative ? 'SHORTAGE' : 'MATCHED';
+  }
+  target.differenceProfile = differenceProfile;
+  target.status = differenceProfile === 'MATCHED' ? PHYSICAL_STOCK_STATUS.MATCHED
+    : differenceProfile === 'SURPLUS' ? PHYSICAL_STOCK_STATUS.SURPLUS
+      : differenceProfile === 'SHORTAGE' ? PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN
+        : differenceProfile === 'MIXED' ? PHYSICAL_STOCK_STATUS.MIXED
+          : PHYSICAL_STOCK_STATUS.UNRESOLVED;
   target.completedAt = new Date().toISOString();
   target.completedBy = user.userId || user.code || user.id;
   if (target.correctionOf) {
@@ -298,7 +374,17 @@ export function restartPhysicalStockInspection(inspectionId, user) {
   const target = all.find(item => item.id === inspectionId);
   if (!target || target.status !== PHYSICAL_STOCK_STATUS.RECOUNT_REQUIRED) throw new Error('Pemeriksaan tidak memerlukan hitung ulang.');
   const batch = getAllBatches().find(item => identities(item).has(String(target.batchId)));
-  target.systemQtySnapshot = getAvailableQty(target.batchId);
+  const systemQtySnapshot = batch ? getAvailableQty(target.batchId) : target.systemQtySnapshot;
+  const reference = batch ? resolvePhysicalStockBedReference(batch) : null;
+  target.systemQtySnapshot = systemQtySnapshot;
+  target.referenceSnapshot = JSON.parse(JSON.stringify(reference || target.referenceSnapshot || null));
+  target.referenceRows = JSON.parse(JSON.stringify(reference?.referenceRows || target.referenceRows || []));
+  target.reconciliationSnapshot = reference ? {
+    officialBatchBalance: reference.officialBatchBalance,
+    attributedBedenganReferenceTotal: reference.attributedBedenganReferenceTotal,
+    unallocatedBatchBalance: reference.unallocatedBatchBalance,
+    reconciliationStatus: reference.reconciliationStatus
+  } : target.reconciliationSnapshot;
   target.ledgerFingerprint = ledgerFingerprint(batch);
   target.status = PHYSICAL_STOCK_STATUS.COUNTING;
   target.counts = null;
@@ -314,10 +400,14 @@ export function startPhysicalStockCorrection(inspectionId, user) {
   const all = storage.get(PHYSICAL_STOCK_STORAGE_KEY, []);
   const source = all.find(item => item.id === inspectionId);
   if (!source) throw new Error('Pemeriksaan yang akan dikoreksi tidak ditemukan.');
+  const reconciliationDoc = storage.get('physical_stock_bapsb', []).find(item => item.inspectionId === source.id);
+  if (reconciliationDoc && reconciliationDoc.status !== 'RETURNED_TO_ASB') {
+    throw new Error('Hasil sudah masuk proses BA Rekonsiliasi. Koreksi hanya dapat dilakukan setelah dokumen dikembalikan ke ASB.');
+  }
   if (source.status === PHYSICAL_STOCK_STATUS.SHORTAGE_VERIFIED || source.stockMutationStatus === 'APPLIED') {
     throw new Error('Hasil ini sudah memutasi stok. Koreksi wajib melalui pembatalan jurnal afkir.');
   }
-  if (![PHYSICAL_STOCK_STATUS.MATCHED, PHYSICAL_STOCK_STATUS.SURPLUS, PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN].includes(source.status)) {
+  if (![PHYSICAL_STOCK_STATUS.MATCHED, PHYSICAL_STOCK_STATUS.SURPLUS, PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN, PHYSICAL_STOCK_STATUS.MIXED].includes(source.status)) {
     throw new Error('Hanya hasil pemeriksaan yang sudah dikunci dan belum memutasi stok yang dapat dikoreksi.');
   }
   const existing = all.find(item => item.correctionOf === source.id && [PHYSICAL_STOCK_STATUS.COUNTING, PHYSICAL_STOCK_STATUS.RECOUNT_REQUIRED].includes(item.status));
@@ -326,6 +416,8 @@ export function startPhysicalStockCorrection(inspectionId, user) {
   const batch = getAllBatches().find(item => identities(item).has(String(source.batchId)));
   if (!batch) throw new Error('Batch pemeriksaan tidak ditemukan.');
   const now = new Date().toISOString();
+  const systemQtySnapshot = getAvailableQty(source.batchId);
+  const reference = resolvePhysicalStockBedReference(batch);
   const correction = {
     id: `PSI-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
     docNo: `${source.docNo}-R${Number(source.revisionCount || 0) + 1}`,
@@ -335,8 +427,16 @@ export function startPhysicalStockCorrection(inspectionId, user) {
     estateId: source.estateId || user.estateId || null,
     divisionId: source.divisionId || user.divisionId || null,
     bedenganIds: Array.isArray(source.bedenganIds) ? [...source.bedenganIds] : [],
+    referenceSnapshot: reference ? JSON.parse(JSON.stringify(reference)) : (source.referenceSnapshot ? JSON.parse(JSON.stringify(source.referenceSnapshot)) : null),
+    referenceRows: reference ? JSON.parse(JSON.stringify(reference.referenceRows || [])) : (Array.isArray(source.referenceRows) ? JSON.parse(JSON.stringify(source.referenceRows)) : []),
+    reconciliationSnapshot: reference ? {
+      officialBatchBalance: reference.officialBatchBalance,
+      attributedBedenganReferenceTotal: reference.attributedBedenganReferenceTotal,
+      unallocatedBatchBalance: reference.unallocatedBatchBalance,
+      reconciliationStatus: reference.reconciliationStatus
+    } : (source.reconciliationSnapshot ? JSON.parse(JSON.stringify(source.reconciliationSnapshot)) : null),
     status: PHYSICAL_STOCK_STATUS.COUNTING,
-    systemQtySnapshot: getAvailableQty(source.batchId),
+    systemQtySnapshot,
     ledgerFingerprint: ledgerFingerprint(batch),
     attempt: Number(source.attempt || 1) + 1,
     correctionOf: source.id,
@@ -381,158 +481,11 @@ export async function submitPhysicalStockShortageForVerification(inspectionId, u
   if (index < 0) throw new Error('Pemeriksaan tidak ditemukan.');
   const target = all[index];
   if (target.status === PHYSICAL_STOCK_STATUS.SHORTAGE_VERIFIED) return { ...target, idempotentSkipped: true };
-  if (![PHYSICAL_STOCK_STATUS.SHORTAGE_OPEN, PHYSICAL_STOCK_STATUS.SHORTAGE_PENDING_VERIFICATION].includes(target.status)) {
-    throw new Error('Pemeriksaan ini tidak memiliki selisih kurang yang dapat diajukan.');
+  const reconciliationDoc = storage.get('physical_stock_bapsb', []).find(item => item.inspectionId === target.id);
+  if (!reconciliationDoc || reconciliationDoc.status !== 'APPLIED') {
+    throw new Error('Selisih kurang wajib melalui BA Rekonsiliasi, persetujuan Askep, pengesahan Pengurus, dan penerapan Central Hub terlebih dahulu.');
   }
-
-  const batch = getAllBatches().find(item => identities(item).has(String(target.batchId)));
-  if (!batch || ledgerFingerprint(batch) !== target.ledgerFingerprint) {
-    target.status = PHYSICAL_STOCK_STATUS.RECOUNT_REQUIRED;
-    target.invalidatedAt = new Date().toISOString();
-    target.invalidatedReason = 'Saldo sistem berubah sebelum pengajuan afkir.';
-    storage.set(PHYSICAL_STOCK_STORAGE_KEY, all);
-    throw new Error('Saldo sistem sudah berubah sejak pemeriksaan. Hitung ulang sebelum mengajukan afkir.');
-  }
-
-  const shortage = Math.abs(Number(target.difference));
-  if (!Number.isInteger(shortage) || shortage <= 0) throw new Error('Jumlah selisih kurang tidak valid.');
-  const now = new Date().toISOString();
-  const year = new Date().getFullYear();
-  const actorId = user.userId || user.code || user.id;
-  const selections = storage.get('selection_transactions', []);
-  let selection = selections.find(item => item.physicalStockInspectionId === target.id);
-
-  if (!selection) {
-    const sequenceMap = storage.get('cull_document_sequences', {}) || {};
-    const sequenceKey = `${year}/PSF`;
-    const existingMax = selections.reduce((max, item) => {
-      const match = String(item.docNo || '').match(new RegExp(`^${year}/CULL/PSF/(\\d+)$`, 'i'));
-      return match ? Math.max(max, Number(match[1])) : max;
-    }, 0);
-    const sequence = Math.max(Number(sequenceMap[sequenceKey] || 0), existingMax) + 1;
-    sequenceMap[sequenceKey] = sequence;
-    storage.set('cull_document_sequences', sequenceMap);
-    const selectionId = `SEL-PSF-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-    const selectionDocNo = formatCullDocNo(year, 'PSF', sequence);
-    const bedenganIds = Array.isArray(target.bedenganIds) ? target.bedenganIds : [];
-    selection = {
-      id: selectionId,
-      selectionId,
-      docNo: selectionDocNo,
-      selectionNo: selectionDocNo,
-      selectionPoolDocNo: selectionDocNo,
-      transactionType: 'PEMERIKSAAN_HASIL_SELEKSI',
-      sourceModule: 'PHYSICAL_STOCK_INSPECTION',
-      sourceTransactionType: 'PHYSICAL_STOCK_INSPECTION',
-      sourceTransactionId: target.id,
-      sourceDocNo: target.docNo,
-      physicalStockInspectionId: target.id,
-      physicalStockInspectionDocNo: target.docNo,
-      originType: 'PHYSICAL_STOCK_SHORTAGE',
-      estateId: target.estateId || user.estateId || null,
-      divisionId: target.divisionId || user.divisionId || null,
-      programId: target.programId || batch.programId || null,
-      programCode: batch.programCode || null,
-      programName: batch.programName || null,
-      batchId: target.batchId,
-      batchCode: target.batchCode || batch.batchCode || batch.batchNo || target.batchId,
-      batchNo: target.batchCode || batch.batchCode || batch.batchNo || target.batchId,
-      bedenganIds,
-      bedenganId: bedenganIds[0] || null,
-      bedenganCode: bedenganIds[0] || null,
-      bedengan: bedenganIds.length ? bedenganIds.join(', ') : '-',
-      clone: batch.clone || batch.klon || null,
-      klon: batch.klon || batch.clone || null,
-      category: 'SELISIH_STOK_FISIK',
-      alasanDitolakCategory: 'Selisih kurang pemeriksaan stok fisik',
-      alasan: 'Selisih kurang pemeriksaan stok fisik',
-      alasanDetail: notes || `Afkir berdasarkan pemeriksaan stok fisik ${target.docNo}`,
-      reason: 'Selisih kurang pemeriksaan stok fisik',
-      catatan: notes || `Diajukan dari pemeriksaan stok fisik ${target.docNo}`,
-      jumlahDiperiksa: Number(target.systemQtySnapshot),
-      jumlahLayak: Number(target.physicalQty),
-      jumlahAfkir: shortage,
-      quantity: shortage,
-      selectionStage: 'SELEKSI_PASCA_OKULASI',
-      selectionType: 'PASCA_OKULASI',
-      systemQtySnapshot: Number(target.systemQtySnapshot),
-      physicalQty: Number(target.physicalQty),
-      difference: Number(target.difference),
-      tanggal: now.slice(0, 10),
-      tanggalSeleksi: now.slice(0, 10),
-      photoId: target.photoEvidenceRef || null,
-      photoEvidenceRef: target.photoEvidenceRef || null,
-      photoCapturedAt: target.photoEvidence?.capturedAt || null,
-      latitude: target.photoEvidence?.latitude ?? null,
-      longitude: target.photoEvidence?.longitude ?? null,
-      status: 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN',
-      verificationStatus: 'MENUNGGU_VERIFIKASI',
-      submissionStatus: 'SUBMITTED_TO_ASB',
-      stockMutationStatus: 'PENDING',
-      isFinal: false,
-      submittedAt: now,
-      submittedByUserId: actorId,
-      submittedByName: user.name || 'Asisten Bibitan',
-      submittedByRole: ROLES.ASISTEN_BIBITAN,
-      createdAt: now,
-      updatedAt: now,
-      createdByUserId: actorId,
-      createdByName: user.name || 'Asisten Bibitan',
-      createdByRole: ROLES.ASISTEN_BIBITAN,
-      createdByUserRole: ROLES.ASISTEN_BIBITAN,
-      position: 'Asisten Bibitan'
-    };
-    selections.push(selection);
-  } else if (selection.status !== 'DISETUJUI') {
-    selection.status = 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN';
-    selection.verificationStatus = 'MENUNGGU_VERIFIKASI';
-    selection.submissionStatus = 'SUBMITTED_TO_ASB';
-    selection.returnReason = null;
-    selection.submittedAt = now;
-    selection.updatedAt = now;
-  }
-  storage.set('selection_transactions', selections);
-  const savedSelection = storage.get('selection_transactions', []).find(item => item.id === selection.id);
-  if (!savedSelection) throw new Error('Dokumen seleksi afkir belum berhasil disimpan. Coba kembali.');
-
-  const verifications = storage.get('verification_transactions', []);
-  const verificationIndex = verifications.findIndex(item =>
-    String(item.referenceId) === String(selection.id) || String(item.referenceDocNo) === String(selection.docNo)
-  );
-  const verificationRecord = {
-    verificationId: verificationIndex >= 0 ? verifications[verificationIndex].verificationId : `VRF-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    verificationNo: verificationIndex >= 0 ? verifications[verificationIndex].verificationNo : `VRF-${year}${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`,
-    referenceType: 'PENYELEKSIAN',
-    referenceId: selection.id,
-    referenceDocNo: selection.docNo,
-    moduleType: 'PENYELEKSIAN',
-    sourceModule: 'PHYSICAL_STOCK_INSPECTION',
-    estateId: selection.estateId,
-    divisionId: selection.divisionId,
-    verificationStatus: 'MENUNGGU_VERIFIKASI',
-    returnReason: null,
-    findings: [],
-    submittedAt: now,
-    submittedByUserId: actorId,
-    submittedByName: user.name || 'Asisten Bibitan',
-    createdAt: verificationIndex >= 0 ? verifications[verificationIndex].createdAt : now,
-    updatedAt: now
-  };
-  if (verificationIndex >= 0) verifications[verificationIndex] = { ...verifications[verificationIndex], ...verificationRecord };
-  else verifications.push(verificationRecord);
-  storage.set('verification_transactions', verifications);
-  const savedVerification = storage.get('verification_transactions', []).find(item => item.referenceId === selection.id);
-  if (!savedVerification) throw new Error('Pengajuan belum masuk ke halaman Verifikasi. Coba kembali.');
-
-  target.status = PHYSICAL_STOCK_STATUS.SHORTAGE_PENDING_VERIFICATION;
-  target.cullSubmissionStatus = 'SUBMITTED_TO_ASB';
-  target.selectionTransactionId = selection.id;
-  target.selectionDocNo = selection.docNo;
-  target.cullSubmittedAt = now;
-  target.cullSubmittedBy = actorId;
-  all[index] = target;
-  storage.set(PHYSICAL_STOCK_STORAGE_KEY, all);
-  return { ...target, selectionTransaction: { ...selection } };
+  return { ...target, idempotentSkipped: true };
 }
 
 // Alias dipertahankan agar pemanggil lama tetap kompatibel. Perilakunya sekarang
@@ -544,15 +497,28 @@ export function validatePhysicalStockCullSelection(selectionRecord) {
   const inspection = storage.get(PHYSICAL_STOCK_STORAGE_KEY, [])
     .find(item => item.id === selectionRecord.physicalStockInspectionId);
   if (!inspection) return { isValid: false, reason: 'Pemeriksaan stok fisik sumber tidak ditemukan.' };
+  if (
+    selectionRecord.approvalSource === 'PHYSICAL_STOCK_RECONCILIATION' &&
+    selectionRecord.status === 'DISETUJUI' &&
+    selectionRecord.stockMutationStatus === 'APPLIED' &&
+    (selectionRecord.inventoryJournalId || (Array.isArray(selectionRecord.inventoryJournalIds) && selectionRecord.inventoryJournalIds.length > 0))
+  ) {
+    return { isValid: true, inspection };
+  }
   if (inspection.status === PHYSICAL_STOCK_STATUS.SHORTAGE_VERIFIED && selectionRecord.status === 'DISETUJUI') {
     return { isValid: true, inspection };
   }
   if (inspection.selectionTransactionId && inspection.selectionTransactionId !== selectionRecord.id) {
     return { isValid: false, reason: 'Dokumen seleksi tidak sesuai dengan pengajuan pemeriksaan stok.' };
   }
-  const shortage = Math.abs(Number(inspection.difference));
+  const shortage = Array.isArray(selectionRecord.physicalStockLines) && selectionRecord.physicalStockLines.length
+    ? selectionRecord.physicalStockLines.reduce((sum, line) => sum + Math.abs(Number(line.shortage || 0)), 0)
+    : Math.abs(Number(inspection.difference));
   if (shortage !== Number(selectionRecord.jumlahAfkir || selectionRecord.quantity || 0)) {
     return { isValid: false, reason: 'Jumlah afkir tidak sesuai dengan selisih pemeriksaan stok fisik.' };
+  }
+  if (Array.isArray(selectionRecord.physicalStockLines) && selectionRecord.physicalStockLines.some(line => Number(line.shortage || 0) > 0 && !String(line.reason || '').trim())) {
+    return { isValid: false, reason: 'Alasan selisih kurang wajib lengkap untuk setiap Bedengan.' };
   }
   const batch = getAllBatches().find(item => identities(item).has(String(inspection.batchId)));
   if (!batch || ledgerFingerprint(batch) !== inspection.ledgerFingerprint) {
@@ -601,6 +567,181 @@ export function completePhysicalStockCullVerification(selectionRecord, currentUs
   if (existing) Object.assign(existing, record); else verifications.push(record);
   storage.set(PHYSICAL_STOCK_CULL_KEY, verifications);
   return { ...target };
+}
+
+/**
+ * Membentuk dokumen afkir yang sudah sah dari BA Rekonsiliasi final.
+ * Mutasi stok wajib sudah dilakukan oleh reconciliation service; fungsi ini
+ * hanya membentuk dokumen downstream untuk riwayat Penyeleksian dan Pemusnahan.
+ */
+export function createApprovedPhysicalStockCullFromReconciliation(inspectionId, reconciliationDoc, currentUser, journalEntries = []) {
+  const all = storage.get(PHYSICAL_STOCK_STORAGE_KEY, []);
+  const inspectionIndex = all.findIndex(item => item.id === inspectionId);
+  if (inspectionIndex < 0) throw new Error('Pemeriksaan stok fisik sumber rekonsiliasi tidak ditemukan.');
+  const inspection = all[inspectionIndex];
+  if (!reconciliationDoc?.id || reconciliationDoc.applicationStatus !== 'APPLIED') {
+    throw new Error('Dokumen afkir hanya dapat dibentuk dari rekonsiliasi yang sudah diterapkan.');
+  }
+
+  const shortageLines = (Array.isArray(reconciliationDoc.reconciliationLines) ? reconciliationDoc.reconciliationLines : [])
+    .filter(line => String(line.direction || '').toUpperCase() === 'SHORTAGE' && Number(line.quantity || Math.abs(line.difference || 0)) > 0)
+    .map(line => {
+      const quantity = Number(line.quantity || Math.abs(line.difference || 0));
+      const journal = journalEntries.find(entry => entry.lineId === line.lineId && Number(entry.qtyOut || 0) > 0);
+      return {
+        lineId: line.lineId,
+        bedenganId: line.bedenganId || null,
+        bedenganCode: line.bedenganCode || line.bedenganId || 'TOTAL_BATCH',
+        shortage: quantity,
+        reason: String(line.reason || '').trim(),
+        provenance: line.provenance || { seeding: [], selection: [] },
+        inventoryJournalId: journal?.id || null
+      };
+    });
+  if (!shortageLines.length) return null;
+  if (shortageLines.some(line => !line.reason)) {
+    throw new Error('Alasan selisih kurang wajib lengkap untuk setiap Bedengan.');
+  }
+
+  const selections = storage.get('selection_transactions', []);
+  const existing = selections.find(item => item.physicalStockReconciliationId === reconciliationDoc.id);
+  if (existing) return { ...existing, idempotentSkipped: true };
+
+  const batch = getAllBatches().find(item => identities(item).has(String(inspection.batchId)));
+  if (!batch) throw new Error('Batch sumber rekonsiliasi tidak ditemukan.');
+  const now = new Date().toISOString();
+  const year = new Date().getFullYear();
+  const sequenceMap = storage.get('cull_document_sequences', {}) || {};
+  const sequenceKey = `${year}/PSF`;
+  const existingMax = selections.reduce((max, item) => {
+    const match = String(item.docNo || '').match(new RegExp(`^${year}/CULL/PSF/(\\d+)$`, 'i'));
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  const sequence = Math.max(Number(sequenceMap[sequenceKey] || 0), existingMax) + 1;
+  sequenceMap[sequenceKey] = sequence;
+  storage.set('cull_document_sequences', sequenceMap);
+
+  const selectionId = `SEL-PSR-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const selectionDocNo = formatCullDocNo(year, 'PSF', sequence);
+  const totalShortage = shortageLines.reduce((sum, line) => sum + line.shortage, 0);
+  const bedenganIds = [...new Set(shortageLines.map(line => line.bedenganId).filter(Boolean))];
+  const actorId = currentUser?.userId || currentUser?.code || currentUser?.id || 'SYSTEM';
+  const inventoryJournalIds = shortageLines.map(line => line.inventoryJournalId).filter(Boolean);
+  const selection = {
+    id: selectionId,
+    selectionId,
+    docNo: selectionDocNo,
+    selectionNo: selectionDocNo,
+    selectionPoolDocNo: selectionDocNo,
+    transactionType: 'PEMERIKSAAN_HASIL_SELEKSI',
+    sourceModule: 'PHYSICAL_STOCK_INSPECTION',
+    sourceTransactionType: 'PHYSICAL_STOCK_RECONCILIATION',
+    sourceTransactionId: reconciliationDoc.id,
+    sourceDocNo: reconciliationDoc.docNo,
+    physicalStockInspectionId: inspection.id,
+    physicalStockInspectionDocNo: inspection.docNo,
+    physicalStockReconciliationId: reconciliationDoc.id,
+    physicalStockReconciliationDocNo: reconciliationDoc.docNo,
+    originType: 'PHYSICAL_STOCK_SHORTAGE',
+    approvalSource: 'PHYSICAL_STOCK_RECONCILIATION',
+    approvalLabel: 'Disahkan melalui BA Rekonsiliasi Stok Fisik',
+    estateId: inspection.estateId || currentUser?.estateId || null,
+    divisionId: inspection.divisionId || currentUser?.divisionId || null,
+    programId: inspection.programId || batch.programId || null,
+    programCode: batch.programCode || null,
+    programName: batch.programName || null,
+    batchId: inspection.batchId,
+    batchCode: inspection.batchCode || batch.batchCode || batch.batchNo || inspection.batchId,
+    batchNo: inspection.batchCode || batch.batchCode || batch.batchNo || inspection.batchId,
+    bedenganIds,
+    bedenganId: bedenganIds.length === 1 ? bedenganIds[0] : null,
+    bedenganCode: bedenganIds.length === 1 ? shortageLines[0].bedenganCode : null,
+    bedengan: shortageLines.map(line => line.bedenganCode).join(', '),
+    clone: batch.clone || batch.klon || null,
+    klon: batch.klon || batch.clone || null,
+    category: 'SELISIH_STOK_FISIK',
+    alasanDitolakCategory: 'Selisih kurang pemeriksaan stok fisik',
+    alasan: 'Selisih kurang pemeriksaan stok fisik',
+    alasanDetail: `Disahkan melalui ${reconciliationDoc.docNo}`,
+    reason: 'Selisih kurang pemeriksaan stok fisik',
+    catatan: `Disahkan melalui BA Rekonsiliasi Stok Fisik ${reconciliationDoc.docNo}`,
+    jumlahDiperiksa: Number(inspection.systemQtySnapshot || 0),
+    jumlahLayak: Number(inspection.physicalQty || 0),
+    jumlahAfkir: totalShortage,
+    quantity: totalShortage,
+    physicalStockLines: shortageLines,
+    selectionStage: 'SELEKSI_PASCA_OKULASI',
+    selectionType: 'PASCA_OKULASI',
+    systemQtySnapshot: Number(inspection.systemQtySnapshot || 0),
+    physicalQty: Number(inspection.physicalQty || 0),
+    difference: Number(inspection.difference || 0),
+    tanggal: now.slice(0, 10),
+    tanggalSeleksi: now.slice(0, 10),
+    photoId: inspection.photoEvidenceRef || null,
+    photoEvidenceRef: inspection.photoEvidenceRef || null,
+    photoCapturedAt: inspection.photoEvidence?.capturedAt || null,
+    latitude: inspection.photoEvidence?.latitude ?? null,
+    longitude: inspection.photoEvidence?.longitude ?? null,
+    status: 'DISETUJUI',
+    verificationStatus: 'TERVERIFIKASI',
+    submissionStatus: 'APPROVED_BY_RECONCILIATION',
+    stockMutationStatus: 'APPLIED',
+    stockMutationQty: totalShortage,
+    inventoryJournalId: inventoryJournalIds[0] || null,
+    inventoryJournalIds,
+    isFinal: true,
+    submittedAt: reconciliationDoc.finalizedAt || now,
+    submittedByUserId: reconciliationDoc.finalizedBy || actorId,
+    submittedByName: reconciliationDoc.signatures?.pengurus?.name || currentUser?.name || 'Pengurus',
+    verifiedAt: now,
+    verifiedByUserId: actorId,
+    verifiedByName: currentUser?.name || 'Asisten Bibitan',
+    verifiedByRole: currentUser?.role || ROLES.ASISTEN_BIBITAN,
+    approvedAt: now,
+    approvalNotes: `Disahkan melalui BA Rekonsiliasi ${reconciliationDoc.docNo}`,
+    createdAt: now,
+    updatedAt: now
+  };
+  selections.push(selection);
+  storage.set('selection_transactions', selections);
+
+  const verifications = storage.get('verification_transactions', []);
+  verifications.push({
+    verificationId: `VRF-PSR-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    verificationNo: `VRF/PSR/${year}/${String(verifications.length + 1).padStart(5, '0')}`,
+    referenceType: 'PENYELEKSIAN',
+    referenceId: selection.id,
+    referenceDocNo: selection.docNo,
+    moduleType: 'PENYELEKSIAN',
+    sourceModule: 'PHYSICAL_STOCK_RECONCILIATION',
+    estateId: selection.estateId,
+    divisionId: selection.divisionId,
+    verificationStatus: 'TERVERIFIKASI',
+    notes: selection.approvalNotes,
+    verifiedByUserId: actorId,
+    verifiedByName: currentUser?.name || 'Asisten Bibitan',
+    verifiedByRole: currentUser?.role || ROLES.ASISTEN_BIBITAN,
+    verifiedAt: now,
+    submittedAt: reconciliationDoc.finalizedAt || now,
+    createdAt: now,
+    updatedAt: now
+  });
+  storage.set('verification_transactions', verifications);
+
+  inspection.status = inspection.differenceProfile === 'MIXED'
+    ? PHYSICAL_STOCK_STATUS.MIXED
+    : PHYSICAL_STOCK_STATUS.SHORTAGE_VERIFIED;
+  inspection.cullSubmissionStatus = 'APPROVED_BY_RECONCILIATION';
+  inspection.shortageVerifiedAt = now;
+  inspection.shortageVerifiedBy = actorId;
+  inspection.shortageVerifiedByName = currentUser?.name || null;
+  inspection.selectionTransactionId = selection.id;
+  inspection.selectionDocNo = selection.docNo;
+  inspection.inventoryJournalIds = [...new Set([...(inspection.inventoryJournalIds || []), ...inventoryJournalIds])];
+  inspection.stockMutationStatus = 'APPLIED';
+  all[inspectionIndex] = inspection;
+  storage.set(PHYSICAL_STOCK_STORAGE_KEY, all);
+  return { ...selection };
 }
 
 export function returnPhysicalStockCullVerification(selectionRecord, currentUser, reason = '') {

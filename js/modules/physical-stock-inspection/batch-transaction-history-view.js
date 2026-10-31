@@ -230,6 +230,18 @@ export function renderBatchTransactionHistoryView(app, initialBatchId = null, on
                     <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px; font-size:0.73rem; color:#334155; line-height:1.45; margin-bottom:8px;">
                       ${esc(item.narrative)}
                     </div>
+                     ${Array.isArray(item.bedenganDetails) && item.bedenganDetails.length ? `
+                       <div style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:6px;padding:7px 9px;margin-bottom:8px;display:flex;flex-direction:column;gap:4px">
+                         ${item.bedenganDetails.map(row => `
+                           <div style="display:flex;justify-content:space-between;gap:8px;font-size:.68rem;color:#475569">
+                             <span><strong style="color:#0F172A">${esc(row.bedenganCode || row.bedenganId || 'TOTAL_BATCH')}</strong> · ${esc(row.referenceStatus || 'LEGACY')}</span>
+                             <span>Fisik ${Number(row.physicalQty || 0).toLocaleString('id-ID')} Pkk${row.difference !== null && row.difference !== undefined ? ` · ${Number(row.difference) > 0 ? '+' : ''}${Number(row.difference).toLocaleString('id-ID')}` : ''}</span>
+                           </div>
+                           ${row.referenceQty !== null && row.referenceQty !== undefined ? `<div style="font-size:.64rem;color:#64748B">Referensi: ${Number(row.referenceQty).toLocaleString('id-ID')} Pkk</div>` : ''}
+                           ${row.reason ? `<div style="font-size:.64rem;color:#64748B">Alasan: ${esc(row.reason)}</div>` : ''}
+                         `).join('')}
+                       </div>
+                     ` : ''}
 
                     <!-- ROW BAWAH: PETUGAS & STATUS VERIFIKASI -->
                     <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid #F1F5F9; padding-top:6px; font-size:0.69rem; color:#64748B;">
