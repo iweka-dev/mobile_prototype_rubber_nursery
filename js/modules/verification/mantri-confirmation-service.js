@@ -10,7 +10,7 @@
  */
 
 import { storage } from '../../core/storage.js';
-import { todayISO, todayDDMMYYYY, isCullDocNo } from '../../core/utils.js';
+import { todayISO, todayDDMMYYYY, isCullDocNo, esc } from '../../core/utils.js';
 import { getCurrentUserContext, resolveUserContext, ROLES } from '../../core/user-context.js';
 import { VERIFICATION_STORAGE_KEY, VERIFICATION_STATUS } from './verification-manager.js';
 import { 
@@ -878,6 +878,63 @@ export function getMantriTodayTransactions(userContext = null, targetDate = null
     });
   });
 
+  // 6a. Sensus Entres: penyimpanan terisolasi dari Menunas dan Topping
+  const censusRecords = storage.get('entres_census_transactions', []);
+  const seenCensusIds = new Set();
+  censusRecords.forEach(item => {
+    const id = item.id || item.docNo;
+    if (!id || seenCensusIds.has(id)) return;
+    seenCensusIds.add(id);
+
+    const bDate = extractBusinessDate(item);
+    const isToday = bDate === todayStr;
+    const stat = resolveTransactionStatus(item, 'SENSUS_ENTRES', verifMap);
+    const isOutstanding = stat.status === MANTRI_TRANSACTION_STATUS.READY_TO_CONFIRM || stat.status === MANTRI_TRANSACTION_STATUS.REVISION;
+    if (!isToday && !isOutstanding) return;
+    if (!matchActor(item, user)) return;
+
+    const docNo = item.docNo || item.id;
+    const actor = item.mantri || item.actorName || user?.name || 'Mantri Bibitan';
+    const plot = item.kodePlot || item.plotName || '-';
+    const clone = item.cloneName || item.klon || '-';
+    const dead = formatSafeNumber(item.pokokMati ?? 0);
+    const branches = formatSafeNumber(item.jumlahCabang ?? 0);
+    const length = formatSafeNumber(item.totalPanjangCabangMeter ?? 0);
+
+    normalizedList.push({
+      id: String(id),
+      docNo,
+      moduleType: MODULE_TYPES.KEBUN_ENTRES,
+      activityType: 'SENSUS_ENTRES',
+      referenceType: 'SENSUS_ENTRES',
+      moduleLabel: MODULE_LABELS[MODULE_TYPES.KEBUN_ENTRES],
+      date: bDate,
+      actor,
+      summary: `${item.periodName || 'Periode sensus'} · Plot ${plot}: ${dead} Pokok Mati, ${branches} Cabang, ${length} m`,
+      status: stat.status,
+      verificationStatus: stat.verificationStatus,
+      rawRecord: item,
+      storageKey: 'entres_census_transactions',
+      display: {
+        title: 'Sensus Entres',
+        info: `${item.periodName || item.periodCode || '-'} · Plot ${plot} · Klon ${clone}`,
+        mainQty: `${dead} Pokok Mati`,
+        unit: 'Pkk',
+        fields: [
+          { label: 'Periode Sensus', value: item.periodName || item.periodCode || '-' },
+          { label: 'Plot', value: plot },
+          { label: 'Klon', value: clone },
+          { label: 'Populasi Acuan', value: `${formatSafeNumber(item.populasiAcuan ?? 0)} Pkk` },
+          { label: 'Pokok Mati', value: `${dead} Pkk`, highlight: true },
+          { label: 'Jumlah Cabang', value: branches, highlight: true },
+          { label: 'Panjang Cabang', value: `${length} m`, highlight: true },
+          { label: 'Catatan', value: item.catatan || '-' },
+          ...(Number(item.pokokMati || 0) > 0 ? [{ label: 'Alasan Pokok Mati', value: item.alasan || '-' }] : [])
+        ]
+      }
+    });
+  });
+
   // 7. Okulasi: budding_transactions
   const buddings = storage.get('budding_transactions', []);
   const seenBuddingIds = new Set();
@@ -957,6 +1014,21 @@ export function getMantriTodayTransactions(userContext = null, targetDate = null
     const formattedGagal = formatSafeNumber(gagal);
     const bedengan = item.bedengan || '-';
     const klon = item.klonEntres || '-';
+    const workers = Array.isArray(item.workers) ? item.workers : [];
+    const workerDetailFields = workers.length > 0
+      ? workers.map((worker, index) => {
+          const name = esc(worker?.name || worker?.workerName || 'Pekerja');
+          const code = esc(worker?.code || worker?.workerCode || worker?.id || worker?.workerId || '-');
+          const successfulQty = worker?.jlhBerhasil ?? worker?.jumlahBerhasil ?? worker?.jumlahJadi ?? worker?.berhasil;
+          const successfulDisplay = successfulQty === undefined || successfulQty === null || successfulQty === ''
+            ? '-'
+            : `${esc(formatSafeNumber(successfulQty))} Pkk`;
+          return {
+            label: `Pekerja ${index + 1}`,
+            value: `${name} (${code}) · Berhasil ${successfulDisplay}`
+          };
+        })
+      : [{ label: 'Rincian Pekerja', value: 'Data pekerja tidak tersedia pada transaksi ini' }];
     const summary = `Periksa: ${formattedChecked} Pkk, Jadi: ${formattedJadi} Pkk (${pct}%)`;
 
     normalizedList.push({
@@ -983,7 +1055,9 @@ export function getMantriTodayTransactions(userContext = null, targetDate = null
           { label: 'Total Diperiksa', value: `${formattedChecked} Pkk` },
           { label: 'Jumlah Berhasil', value: `${formattedJadi} Pkk`, highlight: true },
           { label: 'Jumlah Tidak Berhasil', value: `${formattedGagal} Pkk` },
-          { label: 'Persentase Jadi', value: `${pct}%`, highlight: true }
+          { label: 'Persentase Keberhasilan', value: `${pct}%`, highlight: true },
+          { label: 'Jumlah Pekerja', value: workers.length > 0 ? `${formatSafeNumber(workers.length)} Orang` : 'Tidak tercatat' },
+          ...workerDetailFields
         ]
       }
     });

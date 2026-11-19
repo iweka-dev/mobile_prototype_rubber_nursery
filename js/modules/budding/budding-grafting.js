@@ -497,8 +497,8 @@ export function renderBuddingGrafting() {
                 <div class="card-summary-wrapper" style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 10px; padding: 14px 16px; font-size: 0.78rem; box-shadow: 0 1px 3px rgba(0,0,0,0.03); position: relative; margin-bottom: 8px;">
                   
                   <!-- BAGIAN A: IDENTITAS DOKUMEN -->
-                  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-                    <div>
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px;">
+                    <div style="min-width: 0; flex: 1;">
                       <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                         <span style="font-weight: 800; font-size: 0.98rem; color: #111827; letter-spacing: -0.01em;">${docNo}</span>
                         <span style="font-size: 0.65rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; background: #E8F5E9; color: #116834; border: 1px solid #C8E6C9;">
@@ -544,9 +544,10 @@ export function renderBuddingGrafting() {
                           </div>
                         `;
                       } else {
+                        const isVerified = tx.status === 'DISETUJUI' || tx.verificationStatus === 'TERVERIFIKASI';
                         return `
-                          <span style="font-size: 0.65rem; font-weight: 700; color: #64748B; background: #F1F5F9; border: 1px solid #CBD5E1; padding: 2px 7px; border-radius: 4px; margin-top: 2px;">
-                            ${tx.status === 'DISETUJUI' || tx.verificationStatus === 'TERVERIFIKASI' ? 'Terverifikasi' : 'Menunggu Verifikasi'}
+                          <span style="display: inline-flex; align-items: center; flex: 0 0 auto; white-space: nowrap; font-size: 0.62rem; line-height: 1.15; font-weight: 700; color: ${isVerified ? '#047857' : '#1D4ED8'}; background: ${isVerified ? '#ECFDF5' : '#EFF6FF'}; border: 1px solid ${isVerified ? '#A7F3D0' : '#BFDBFE'}; padding: 3px 8px; border-radius: 9999px; margin-top: 2px;">
+                            ${isVerified ? 'Terverifikasi' : 'Menunggu Verifikasi'}
                           </span>
                         `;
                       }

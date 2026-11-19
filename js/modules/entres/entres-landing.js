@@ -119,11 +119,11 @@ export function renderEntresLanding() {
           </div>
         </div>
 
-        <!-- 2. MENU TRANSAKSI: MENUNAS & TOPPING (Ukuran Standar Beranda 96px x 115px) -->
-        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <!-- 2. MENU TRANSAKSI: MENUNAS, TOPPING, DAN SENSUS ENTRES -->
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;">
           
           <!-- MENUNAS -->
-          <button id="card-menunas" type="button" class="beranda-menu-card" style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; width: 96px; height: 115px; padding: 8px 4px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.03); cursor: pointer; text-align: center; box-sizing: border-box; transition: transform 0.15s ease, box-shadow 0.15s ease; position: relative;">
+          <button id="card-menunas" type="button" class="beranda-menu-card" style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; width: 100%; min-width: 0; height: 115px; padding: 8px 4px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.03); cursor: pointer; text-align: center; box-sizing: border-box; transition: transform 0.15s ease, box-shadow 0.15s ease; position: relative;">
             <div style="width: 44px; height: 44px; margin-bottom: 6px; display: flex; align-items: center; justify-content: center;">
               <svg viewBox="0 0 48 48" width="40" height="40" fill="none" stroke="#116834" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M24 42V16"></path>
@@ -139,7 +139,7 @@ export function renderEntresLanding() {
           </button>
 
           <!-- TOPPING -->
-          <button id="card-topping" type="button" class="beranda-menu-card" style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; width: 96px; height: 115px; padding: 8px 4px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.03); cursor: pointer; text-align: center; box-sizing: border-box; transition: transform 0.15s ease, box-shadow 0.15s ease; position: relative;">
+          <button id="card-topping" type="button" class="beranda-menu-card" style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; width: 100%; min-width: 0; height: 115px; padding: 8px 4px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.03); cursor: pointer; text-align: center; box-sizing: border-box; transition: transform 0.15s ease, box-shadow 0.15s ease; position: relative;">
             <div style="width: 44px; height: 44px; margin-bottom: 6px; display: flex; align-items: center; justify-content: center;">
               <svg viewBox="0 0 48 48" width="40" height="40" fill="none" stroke="#116834" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M24 42V22"></path>
@@ -154,6 +154,16 @@ export function renderEntresLanding() {
             <span style="font-size: 0.78rem; font-weight: 700; color: #116834; line-height: 1.2; text-align: center;">
               Topping
             </span>
+          </button>
+
+          <!-- SENSUS ENTRES -->
+          <button id="card-sensus-entres" type="button" class="beranda-menu-card" style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:12px;width:100%;min-width:0;height:115px;padding:8px 4px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.03);cursor:pointer;text-align:center;box-sizing:border-box;transition:transform .15s ease,box-shadow .15s ease;position:relative;">
+            <div style="width:44px;height:44px;margin-bottom:6px;display:flex;align-items:center;justify-content:center;">
+              <svg viewBox="0 0 48 48" width="40" height="40" fill="none" stroke="#116834" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M24 42V8"></path><path d="M24 18c-8 0-13-4-15-10 8 0 13 4 15 10z" fill="#E8F5E9"></path><path d="M24 25c8 0 13-4 15-10-8 0-13 4-15 10z" fill="#E8F5E9"></path><path d="M24 32c-7 0-11-3-13-8 7 0 11 3 13 8z" fill="#E8F5E9"></path><circle cx="24" cy="42" r="2.5" fill="#116834"></circle>
+              </svg>
+            </div>
+            <span style="font-size:.78rem;font-weight:700;color:#116834;line-height:1.2;text-align:center;">Sensus Entres</span>
           </button>
 
         </div>
@@ -368,6 +378,10 @@ export function renderEntresLanding() {
       navigate('/entres/topping');
     });
   }
+
+  app.querySelector('#card-sensus-entres')?.addEventListener('click', () => {
+    navigate('/entres/sensus');
+  });
 
   // Modal Dialog Hapus Elements
   const deleteOverlay = app.querySelector('#modal-delete-entres-overlay');

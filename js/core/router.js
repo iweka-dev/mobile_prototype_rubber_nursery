@@ -32,6 +32,8 @@ const TRANSACTION_CREATION_ROUTES = [
   '/entres/menunas/form',
   '/entres/topping',
   '/entres/topping/form',
+  '/entres/sensus/scan',
+  '/entres/sensus/form',
   '/nursery-activity/form',
   '/request/kebun-sepupu/form',
   '/request/kebun-sendiri/form',

@@ -7,6 +7,7 @@ import { toast } from '../../components/toast.js';
 import { assertAttendanceGateOrThrow } from '../../core/attendance-gate-service.js';
 import { applyTransactionActor } from '../../core/transaction-actor.js';
 import { getBuddingInspectionGate } from '../../core/budding-workflow-service.js';
+import { getOkulasiPremiRateSnapshot } from './okulasi-premium-service.js';
 
 export function renderInspectionForm() {
   const app = document.getElementById('app');
@@ -1096,6 +1097,9 @@ export function renderInspectionForm() {
         id: wid,
         name: wName,
         code: targetWorker?.code,
+        premiRatePerPokokSnapshot: targetWorker?.premiRatePerPokokSnapshot
+          ?? getOkulasiPremiRateSnapshot(selectedBudding.type)
+          ?? 150,
         totalDiokulasi: wMax,
         jlhDiperiksa: numDiperiksa,
         jlhBerhasil: numBerhasil,

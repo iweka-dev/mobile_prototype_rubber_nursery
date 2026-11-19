@@ -13,6 +13,7 @@
 
 import { storage } from '../../core/storage.js';
 import { session } from '../../core/session.js';
+import { esc } from '../../core/utils.js';
 import { normalizeRole, ROLES, getCurrentUserContext, resolveUserContext } from '../../core/user-context.js';
 import { getConsolidatedData, runConsistencyCheck, buildTraceabilityChain } from '../consolidation/consolidation-manager.js';
 import { getAllBatches } from '../../data/batch-master.js';
@@ -22,6 +23,9 @@ import { getEstateById } from '../../data/estate-master.js';
 import { getWorkersForUserContext } from '../../data/worker-master.js';
 import { getWorkAllocationByCode } from '../../data/work-allocation-master.js';
 import { getStandardWorkHoursForDate } from '../../data/standard-work-hour-master.js';
+import { getPlotById } from '../../data/budwood-plot-master.js';
+import { getCensusPeriodById } from '../../data/census-period-master.js';
+import { resolveOkulasiPremiRate, formatRupiah } from '../inspection/okulasi-premium-service.js';
 import {
   getSelectionStageLabel,
   getSelectionCategoryLabel,
@@ -78,6 +82,7 @@ export const REFERENCE_TYPES = Object.freeze({
   DEDERAN: 'DEDERAN',
   MENUNAS: 'MENUNAS',
   TOPPING: 'TOPPING',
+  SENSUS_ENTRES: 'SENSUS_ENTRES',
   OKULASI: 'OKULASI',
   PEMERIKSAAN: 'PEMERIKSAAN',
   PEMERIKSAAN_DEDERAN: 'PEMERIKSAAN_DEDERAN',
@@ -146,7 +151,7 @@ export const VERIFICATION_10_MODULES = Object.freeze([
   {
     id: 'KEBUN_ENTRES',
     label: 'Kebun Entres',
-    types: ['KEBUN_ENTRES', 'ENTRES', 'MENUNAS', 'TOPPING'],
+    types: ['KEBUN_ENTRES', 'ENTRES', 'MENUNAS', 'TOPPING', 'SENSUS_ENTRES'],
     iconName: 'tree',
     order: 7
   },
@@ -183,6 +188,7 @@ export const REFERENCE_TYPE_LABELS = Object.freeze({
   DEDERAN: 'Dederan (Germinasi)',
   MENUNAS: 'Menunas',
   TOPPING: 'Topping',
+  SENSUS_ENTRES: 'Sensus Entres',
   OKULASI: 'Okulasi',
   PEMERIKSAAN: 'Pemeriksaan Okulasi',
   PEMERIKSAAN_DEDERAN: 'Pemeriksaan Dederan',
@@ -226,6 +232,7 @@ export const CANONICAL_STORAGE_MAP = Object.freeze({
   ENTRES: ['entres_topping_transactions', 'entres_menunas_transactions', 'entres_transactions'],
   MENUNAS: ['entres_menunas_transactions', 'entres_transactions'],
   TOPPING: ['entres_topping_transactions', 'entres_transactions'],
+  SENSUS_ENTRES: ['entres_census_transactions'],
   MATERIAL: ['seeding_transactions', 'material_usage_transactions'],
   SIMULASI_GUDANG: ['warehouse_issue_simulations'],
   REKAM_PEMELIHARAAN: ['nursery_activity_transactions', 'nursery_activity_records'],
@@ -649,6 +656,7 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
       const typeLabel = raw.type === 'REGRAFTING' ? 'Regrafting' : 'Grafting';
       const bedengan = raw.bedengan || '-';
       const klon = raw.klonEntres || raw.klon || '-';
+      const workers = Array.isArray(raw.workers) ? raw.workers : [];
       const summary = `${formattedQty} Pkk (${typeLabel}) di Bedengan ${bedengan} (Klon: ${klon})`;
 
       return {
@@ -664,6 +672,19 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
           { label: 'Klon Batang Bawah', value: raw.klonRootstock || '-' },
           { label: 'Total Okulasi', value: qty !== '-' ? `${formattedQty} Pkk` : '-', highlight: true },
           { label: 'Mata Entres Digunakan', value: `${formatSafeNumber(raw.jumlahMataEntres ?? raw.jumlah)} Perisai`, highlight: true },
+          { label: 'Jumlah Pekerja', value: workers.length > 0 ? `${formatSafeNumber(workers.length)} Orang` : 'Tidak tercatat' },
+          ...(workers.length > 0 ? workers.map((worker, index) => {
+            const workerName = esc(worker?.name || worker?.workerName || 'Pekerja');
+            const workerCode = esc(worker?.code || worker?.workerCode || worker?.id || worker?.workerId || '-');
+            const workerQty = worker?.qty ?? worker?.jumlah ?? worker?.quantity;
+            const workerQtyDisplay = workerQty === undefined || workerQty === null || workerQty === ''
+              ? '-'
+              : `${esc(formatSafeNumber(workerQty))} Pkk`;
+            return {
+              label: `Pekerja ${index + 1}`,
+              value: `${workerName} (${workerCode}) · ${workerQtyDisplay}`
+            };
+          }) : [{ label: 'Rincian Pekerja', value: 'Data pekerja tidak tersedia pada transaksi ini' }]),
           { label: 'Keterangan', value: raw.keterangan || raw.notes || '-' }
         ]
       };
@@ -680,6 +701,21 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
       const formattedGagal = formatSafeNumber(gagal);
       const bedengan = raw.bedengan || '-';
       const klon = raw.klonEntres || '-';
+      const workers = Array.isArray(raw.workers) ? raw.workers : [];
+      const workerDetailFields = workers.length > 0
+        ? workers.map(worker => {
+            const name = esc(worker?.name || worker?.workerName || 'Pekerja');
+            const successfulQty = worker?.jlhBerhasil ?? worker?.jumlahBerhasil ?? worker?.jumlahJadi ?? worker?.berhasil;
+            const numericSuccessfulQty = Math.max(0, Number(successfulQty) || 0);
+            const successfulDisplay = successfulQty === undefined || successfulQty === null || successfulQty === ''
+              ? 'Hasil berhasil tidak tercatat'
+              : `${esc(formatSafeNumber(successfulQty))} Pkk berhasil<br><span style="font-size:.68rem;color:#9A6700;font-weight:600;">Estimasi Premi ${esc(formatRupiah(numericSuccessfulQty * resolveOkulasiPremiRate(worker, raw.buddingType)))}</span>`;
+            return {
+              label: name,
+              value: successfulDisplay
+            };
+          })
+        : [{ label: 'Rincian Pekerja', value: 'Data pekerja tidak tersedia pada transaksi ini' }];
       const summary = `Periksa: ${formattedChecked} Pkk, Jadi: ${formattedJadi} Pkk (${pct !== '-' ? `${pct}%` : '-'})`;
 
       return {
@@ -696,6 +732,7 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
           { label: 'Jumlah Berhasil', value: jadi !== '-' ? `${formattedJadi} Pkk` : '-', highlight: true },
           { label: 'Jumlah Tidak Berhasil', value: gagal !== '-' ? `${formattedGagal} Pkk` : '-' },
           { label: 'Persentase Jadi', value: pct !== '-' ? `${pct}%` : '-', highlight: true },
+          ...workerDetailFields,
           { label: 'Keterangan', value: raw.keterangan || raw.notes || '-' }
         ]
       };
@@ -1019,6 +1056,34 @@ function _computeVerificationDetailData(raw, userCtx = null, refType = 'PENERIMA
       };
     }
 
+    case 'SENSUS_ENTRES': {
+      const plot = raw.kodePlot || raw.plotName || raw.plotId || '-';
+      const clone = raw.cloneName || raw.klon || '-';
+      const population = formatSafeNumber(raw.populasiAcuan ?? raw.numberOfPlants ?? '-');
+      const dead = formatSafeNumber(raw.pokokMati ?? '-');
+      const branches = formatSafeNumber(raw.jumlahCabang ?? '-');
+      const length = formatSafeNumber(raw.totalPanjangCabangMeter ?? '-');
+      const period = raw.periodName || raw.periodeSensus || raw.periodCode || '-';
+      return {
+        title: 'Sensus Entres',
+        info: `Plot ${plot} · Klon ${clone}`,
+        mainQty: `${dead} Pokok Mati`,
+        unit: 'Pkk',
+        summary: `${period} · Plot ${plot}: ${dead} Pokok Mati, ${branches} Cabang, ${length} m`,
+        fields: [
+          { label: 'Periode Sensus', value: period },
+          { label: 'Kode Plot', value: plot },
+          { label: 'Klon', value: clone },
+          { label: 'Populasi Acuan', value: `${population} Pkk` },
+          { label: 'Pokok Mati', value: `${dead} Pkk`, highlight: true },
+          { label: 'Jumlah Cabang', value: branches, highlight: true },
+          { label: 'Panjang Cabang', value: `${length} m`, highlight: true },
+          { label: 'Catatan', value: raw.catatan || '-' },
+          ...(Number(raw.pokokMati || 0) > 0 ? [{ label: 'Alasan Pokok Mati', value: raw.alasan || '-' }] : [])
+        ]
+      };
+    }
+
     case 'TOPPING': {
       const stik = raw.jumlahKayu !== undefined
         ? raw.jumlahKayu
@@ -1275,6 +1340,21 @@ export function evaluateRecordConsistency(referenceType, record, fullDataset = n
       severity: 'ERROR',
       message
     }));
+  } else if (referenceType === REFERENCE_TYPES.SENSUS_ENTRES || referenceType === 'SENSUS_ENTRES') {
+    const plot = getPlotById(record.plotId);
+    const period = getCensusPeriodById(record.periodId);
+    if (!plot) errors.push({ type: 'INVALID_PLOT_REFERENCE', severity: 'ERROR', message: 'Plot sensus tidak ditemukan pada Master Plot Entres.' });
+    if (!period) errors.push({ type: 'INVALID_CENSUS_PERIOD', severity: 'ERROR', message: 'Periode sensus tidak valid atau tidak ditemukan.' });
+    const numbers = [record.populasiAcuan, record.pokokMati, record.jumlahCabang, record.totalPanjangCabangMeter];
+    if (numbers.some(value => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) || Number(value) < 0)) {
+      errors.push({ type: 'INVALID_CENSUS_VALUE', severity: 'ERROR', message: 'Populasi, pokok mati, jumlah cabang, dan panjang cabang wajib berupa angka nol atau lebih.' });
+    }
+    if (Number(record.pokokMati || 0) > Number(record.populasiAcuan || 0)) {
+      errors.push({ type: 'CENSUS_DEAD_EXCEEDS_POPULATION', severity: 'ERROR', message: 'Pokok mati tidak boleh melebihi populasi acuan Plot.' });
+    }
+    if (Number(record.pokokMati || 0) > 0 && !String(record.alasan || '').trim()) {
+      errors.push({ type: 'CENSUS_REASON_REQUIRED', severity: 'ERROR', message: 'Alasan wajib diisi jika terdapat pokok mati.' });
+    }
   } else if (referenceType === REFERENCE_TYPES.DISPATCH || referenceType === 'PENGELUARAN') {
     const dataset = fullDataset || getConsolidatedData(null);
     if (record.parentRequestId && !dataset.requests.some(r => r.id === record.parentRequestId || r.docNo === record.parentRequestId)) {

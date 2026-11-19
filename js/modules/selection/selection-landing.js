@@ -17,6 +17,7 @@ import { openModal, closeModal } from '../../components/modal.js';
 import { toast } from '../../components/toast.js';
 import { renderStatusDots } from '../../core/status-dot-renderer.js';
 import { getGlobalAttendanceGateStatus, showAttendanceRequirementModal } from '../../core/attendance-gate-service.js';
+import { SELECTION_CULL_REASONS } from '../../data/master-data.js';
 import {
   normalizeDateStr,
   renderCalendarHeaderButton,
@@ -1326,6 +1327,58 @@ export function calculateBatchMetrics(batchGroup, stage = 'SELEKSI_1') {
 }
 
 /**
+ * Ambil transaksi pelaksanaan aktual yang terhubung ke dokumen induk dalam
+ * satu kartu Batch. Status pekerjaan dibaca dari transaksi turunannya bila ada.
+ */
+export function getBatchSelectionExecutionTransactions(batchGroup, stage = 'SELEKSI_1') {
+  const normalizedStage = String(stage || '').trim().toUpperCase();
+  const getExecutions = ['SELEKSI_2', 'SELEKSI_II'].includes(normalizedStage)
+    ? getSeleksi2ExecutionsByDocument
+    : (['SELEKSI_3', 'SELEKSI_III'].includes(normalizedStage)
+      ? getSeleksi3ExecutionsByDocument
+      : getSeleksi1ExecutionsByDocument);
+  const transactionsById = new Map();
+
+  (batchGroup?.docs || []).filter(doc => !doc.isSuperseded).forEach(doc => {
+    const parentRef = doc.id || doc.docNo;
+    if (!parentRef) return;
+    getExecutions(parentRef).forEach(tx => {
+      const key = String(tx.id || tx.docNo || `${parentRef}::${transactionsById.size}`);
+      if (!transactionsById.has(key)) transactionsById.set(key, tx);
+    });
+  });
+
+  return Array.from(transactionsById.values());
+}
+
+export function areSelectionExecutionTransactionsApproved(transactions = []) {
+  return transactions.length > 0 && transactions.every(tx => {
+    const statuses = [tx.status, tx.verificationStatus, tx.approvalStatus, tx.submissionStatus]
+      .filter(Boolean)
+      .map(status => String(status).trim().toUpperCase());
+    const isReturned = statuses.some(status => ['DIKEMBALIKAN', 'REVISION', 'RETURNED'].includes(status));
+    const isApproved = statuses.some(status => ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI'].includes(status));
+    const isVerified = Boolean(tx.isFinal || tx.verifiedAt) || statuses.some(status => ['VERIFIED', 'TERVERIFIKASI'].includes(status));
+    return !isReturned && isApproved && isVerified;
+  });
+}
+
+function areBatchSelectionExecutionsApproved(batchGroup, stage) {
+  const executions = getBatchSelectionExecutionTransactions(batchGroup, stage);
+  if (executions.length > 0) return areSelectionExecutionTransactionsApproved(executions);
+
+  // Pertahankan perilaku dokumen lama yang belum mempunyai transaksi turunan.
+  const legacyDocs = (batchGroup?.docs || []).filter(doc => !doc.isSuperseded);
+  return legacyDocs.length > 0 && legacyDocs.every(doc => {
+    const status = String(doc.status || '').trim().toUpperCase();
+    const verificationStatus = String(doc.verificationStatus || '').trim().toUpperCase();
+    const isApproved = ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI'].includes(status) ||
+      ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI'].includes(verificationStatus);
+    return isApproved && Boolean(doc.isFinal);
+  });
+}
+
+/**
  * Group Pasca-Okulasi items by Program Code
  */
 export function groupPostGraftingDocsByProgram(poolItems) {
@@ -1481,11 +1534,7 @@ export function renderProgramBatchCompactView({
         const subSt = String(d.submissionStatus || '').toUpperCase();
         return st === 'MENUNGGU_VERIFIKASI' || st === 'DIAJUKAN' || st === 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN' || subSt === 'SUBMITTED_TO_ASB' || d.isSubmitted;
       });
-      const isAllDocsApproved = (batch.docs || []).length > 0 && (batch.docs || []).every(d => {
-        const st = String(d.status || '').toUpperCase();
-        const vst = String(d.verificationStatus || '').toUpperCase();
-        return ((st === 'DISETUJUI' || st === 'VERIFIED' || st === 'TERVERIFIKASI' || vst === 'TERVERIFIKASI' || vst === 'DISETUJUI') && d.isFinal);
-      });
+      const isAllDocsApproved = areBatchSelectionExecutionsApproved(batch, stage);
 
       if (hasCorrection) {
         isBatchLocked = false;
@@ -1585,11 +1634,7 @@ export function renderProgramBatchCompactView({
         const subSt = String(d.submissionStatus || '').toUpperCase();
         return st === 'MENUNGGU_VERIFIKASI' || st === 'DIAJUKAN' || st === 'MENUNGGU_VERIFIKASI_ASISTEN_BIBITAN' || subSt === 'SUBMITTED_TO_ASB' || d.isSubmitted;
       });
-      const isAllDocsApproved = (batch.docs || []).length > 0 && (batch.docs || []).every(d => {
-        const st = String(d.status || '').toUpperCase();
-        const vst = String(d.verificationStatus || '').toUpperCase();
-        return ((st === 'DISETUJUI' || st === 'VERIFIED' || st === 'TERVERIFIKASI' || vst === 'TERVERIFIKASI' || vst === 'DISETUJUI') && d.isFinal);
-      });
+      const isAllDocsApproved = areBatchSelectionExecutionsApproved(batch, stage);
 
       if (hasCorrection) {
         isBatchLocked = false;
@@ -3827,19 +3872,9 @@ export function openSelectionConfirmationModal({ item, displayDocNo, user, onCon
   const qtyAfkir = parseInt(item.jumlahAfkir || item.quantity || 0, 10);
   const unit = item.originType === 'REJECT_DEDERAN' ? 'Butir' : 'Pkk';
 
-  const STANDARD_CULL_REASONS = [
-    'Busuk',
-    'Fomes',
-    'Jamur Lainnya',
-    'Kerdil',
-    'Mati',
-    'Patah',
-    'Rusak'
-  ];
-
   // Pre-select existing reason only if it's already one of the 7 standard reasons (e.g. during repair)
   const existingReasonCandidate = String(item.alasanDetail || item.alasan || item.category || item.alasanDitolakCategory || '').trim();
-  const matchedStandardReason = STANDARD_CULL_REASONS.find(r => r.toUpperCase() === existingReasonCandidate.toUpperCase()) || null;
+  const matchedStandardReason = SELECTION_CULL_REASONS.find(r => r.toUpperCase() === existingReasonCandidate.toUpperCase()) || null;
   const defaultCategory = (item.status === 'DIKEMBALIKAN' || item.status === 'REVISION') ? matchedStandardReason : null;
 
   const body = `
@@ -3884,7 +3919,7 @@ export function openSelectionConfirmationModal({ item, displayDocNo, user, onCon
           Alasan Deklarasi Bibit Afkir <span style="color: #DC2626;">*</span>
         </label>
         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px;" id="declaration-category-group">
-          ${STANDARD_CULL_REASONS.map(reason => {
+          ${SELECTION_CULL_REASONS.map(reason => {
             const isChecked = defaultCategory && defaultCategory.toUpperCase() === reason.toUpperCase();
             return `
             <label style="display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1.5px solid ${isChecked ? '#116834' : '#CBD5E1'}; border-radius: 6px; cursor: pointer; background: ${isChecked ? '#F0FDF4' : '#FFFFFF'}; text-align: left; user-select: none; transition: all 0.15s ease;" class="cat-radio-label">

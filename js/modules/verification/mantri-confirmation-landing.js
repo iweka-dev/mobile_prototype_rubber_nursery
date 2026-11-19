@@ -404,12 +404,12 @@ function renderTidakHadirList(txs) {
 }
 
 /**
- * Helper: Merender transaksi Kebun Entres terkelompok berdasarkan MENUNAS dan TOPPING
+ * Helper: Merender transaksi Kebun Entres terkelompok berdasarkan jenis kegiatan
  */
 function renderKebunEntresGroupedList(txs) {
   const activityType = tx => (tx.activityType || tx.rawRecord?.type || tx.type || '').toUpperCase();
 
-  if (!txs.some(tx => ['MENUNAS', 'TOPPING'].includes(activityType(tx)))) {
+  if (!txs.some(tx => ['MENUNAS', 'TOPPING', 'SENSUS_ENTRES'].includes(activityType(tx)))) {
     return `
       <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; padding: 14px; text-align: center; color: #64748B; font-size: 0.78rem;">
         Tidak ada data transaksi Kebun Entres hari ini.
@@ -430,6 +430,7 @@ function renderKebunEntresGroupedList(txs) {
         <h3 style="margin:0;font-size:.78rem;font-weight:800;color:#334155;">${label}</h3>
         ${renderActivityGroup('MENUNAS', scopedTxs.filter(tx => activityType(tx) === 'MENUNAS'))}
         ${renderActivityGroup('TOPPING', scopedTxs.filter(tx => activityType(tx) === 'TOPPING'))}
+        ${renderActivityGroup('SENSUS ENTRES', scopedTxs.filter(tx => activityType(tx) === 'SENSUS_ENTRES'))}
       </section>`;
   };
 
@@ -538,21 +539,23 @@ export function getUniversalCardConfig(tx) {
     case MODULE_TYPES.KEBUN_ENTRES: {
       const actType = (tx.activityType || raw.type || '').toUpperCase();
       const isTopping = actType === 'TOPPING';
-      const primaryEntity = isTopping ? 'Entres Topping' : 'Entres Menunas';
+      const isCensus = actType === 'SENSUS_ENTRES';
+      const primaryEntity = isCensus ? 'Sensus Entres' : (isTopping ? 'Entres Topping' : 'Entres Menunas');
       const primaryDoc = tx.docNo;
-      const mainQty = disp.mainQty || (isTopping ? `${formatSafeNumber(raw.jumlahKayu || 0)} Btg · ${formatSafeNumber(raw.jumlahPerisai || 0)} Perisai` : `${formatSafeNumber(raw.jumlahPohonDitunas || raw.jumlahPokok || 0)} Pokok Ditunas`);
+      const mainQty = disp.mainQty || (isCensus ? `${formatSafeNumber(raw.pokokMati || 0)} Pokok Mati` : (isTopping ? `${formatSafeNumber(raw.jumlahKayu || 0)} Btg · ${formatSafeNumber(raw.jumlahPerisai || 0)} Perisai` : `${formatSafeNumber(raw.jumlahPohonDitunas || raw.jumlahPokok || 0)} Pokok Ditunas`));
       const plot = raw.kodePlot || raw.plotId || raw.plotNo || '-';
-      const klon = raw.namaKlon || raw.klon || '-';
+      const klon = raw.namaKlon || raw.cloneName || raw.klon || '-';
       const budwood = raw.budwoodCode ? `Kebun: ${raw.budwoodCode}` : '';
+      const censusPeriod = raw.periodName || raw.periodCode || '';
 
       return {
-        moduleLabel: isTopping ? 'ENTRES TOPPING' : 'ENTRES MENUNAS',
+        moduleLabel: isCensus ? 'SENSUS ENTRES' : (isTopping ? 'ENTRES TOPPING' : 'ENTRES MENUNAS'),
         primaryEntity,
         primaryDoc,
         quantityText: mainQty,
         breakdownText: disp.breakdown || '',
-        referenceText: budwood,
-        contextText: `Plot: ${plot} · Klon: ${klon}`,
+        referenceText: isCensus ? censusPeriod : budwood,
+        contextText: isCensus ? `Plot: ${plot} · Klon: ${klon} · Populasi: ${formatSafeNumber(raw.populasiAcuan || 0)} Pkk` : `Plot: ${plot} · Klon: ${klon}`,
         dateText: dateFormatted
       };
     }
@@ -857,6 +860,7 @@ export function renderDetailModal(tx, user) {
   const canRepair = matchActor(raw, user) || matchActor(tx, user);
 
   let repairRoute = '/home';
+  if ((tx.activityType || raw.type || '').toUpperCase() === 'SENSUS_ENTRES') repairRoute = '/entres/sensus';
   switch (tx.moduleType) {
     case MODULE_TYPES.PENYELEKSIAN:
     case MODULE_TYPES.SELEKSI_PRA_OKULASI:
@@ -883,7 +887,7 @@ export function renderDetailModal(tx, user) {
     case MODULE_TYPES.KEBUN_ENTRES:
     case MODULE_TYPES.MENUNAS:
     case MODULE_TYPES.TOPPING:
-      repairRoute = '/entres';
+      repairRoute = (tx.activityType || raw.type || '').toUpperCase() === 'SENSUS_ENTRES' ? '/entres/sensus' : '/entres';
       break;
     case MODULE_TYPES.PENGELUARAN:
       repairRoute = '/dispatch';

@@ -24,6 +24,7 @@ import { getAuthorizedTransactions, canUserAccessTransaction } from '../../core/
 import { renderEmptyStateCard } from '../../components/empty-state.js';
 import { renderStatusDots } from '../../core/status-dot-renderer.js';
 import { getBuddingInspectionGate } from '../../core/budding-workflow-service.js';
+import { aggregateOkulasiWorkerPremium, formatRupiah } from './okulasi-premium-service.js';
 import {
   normalizeDateStr,
   renderCalendarHeaderButton,
@@ -43,6 +44,7 @@ import {
   getSeleksi1ExecutionsByDocument,
   getSeleksi2ExecutionsByDocument,
   getSeleksi3ExecutionsByDocument,
+  selectionDocumentRequiresCorrection,
   deleteSeleksi1ExecutionTransaction,
   deleteSeleksi2ExecutionTransaction,
   deleteSeleksi3ExecutionTransaction,
@@ -52,6 +54,8 @@ import {
 import {
   groupPreGraftingDocsByProgram,
   calculateBatchMetrics,
+  getBatchSelectionExecutionTransactions,
+  areSelectionExecutionTransactionsApproved,
   renderProgramBatchCompactView,
   handleBatchRowClick,
   renderGlobalChildTransactionsSection
@@ -188,39 +192,70 @@ function attachInspectionListControlEvents(app, module) {
 }
 
 export function countPendingPreGraftingDocuments(docs = []) {
-  const actionableDocs = docs.filter(doc => {
+  const relevantDocs = docs.filter(doc => {
     const statuses = [doc.status, doc.verificationStatus, doc.approvalStatus, doc.submissionStatus]
       .filter(Boolean)
       .map(status => String(status).trim().toUpperCase());
     const isRemoved = doc.isDeleted || doc.deleted || statuses.some(status =>
       ['DELETED', 'DIBATALKAN', 'CANCELLED', 'CANCELED', 'VOID'].includes(status)
     );
-    if (isRemoved) return false;
-
-    const isReturned = statuses.some(status =>
-      ['DIKEMBALIKAN', 'REVISION', 'RETURNED'].includes(status)
-    );
-    if (isReturned) return true;
-
-    const isFinal = Boolean(doc.isFinal || doc.verifiedAt) || statuses.some(status =>
-      ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI', 'DATA_TERKONFIRMASI', 'FINAL'].includes(status)
-    );
-    return !isFinal;
+    return !isRemoved && !doc.isSuperseded;
   });
 
-  // Kartu UI dikelompokkan pada level Tahap + Program + Batch. Badge harus
-  // memakai unit hitung yang sama agar beberapa parent/Bedengan pada satu
-  // Batch tidak menaikkan notifikasi secara ganda.
-  const actionableBatchKeys = new Set(actionableDocs.map(doc => {
+  // Hitung per Batch sesuai kartu. Dokumen induk yang belum memiliki transaksi
+  // tetap dapat menandakan pekerjaan baru; tetapi tidak boleh mengalahkan hasil
+  // transaksi yang sudah mencakup 100% dan disetujui.
+  const batchGroups = new Map();
+  relevantDocs.forEach(doc => {
     const rawStage = String(doc.selectionStage || doc.stage || 'SELEKSI_I').trim().toUpperCase();
     const stage = ['SELEKSI_I', 'SELEKSI_1'].includes(rawStage)
       ? 'SELEKSI_1'
       : (['SELEKSI_II', 'SELEKSI_2'].includes(rawStage) ? 'SELEKSI_2' : (['SELEKSI_III', 'SELEKSI_3'].includes(rawStage) ? 'SELEKSI_3' : rawStage));
     const program = String(doc.programCode || doc.programId || doc.programName || 'PROGRAM-UNKNOWN').trim().toUpperCase();
     const batch = String(doc.batchCode || doc.batchNo || doc.batchId || doc.id || doc.docNo || 'BATCH-UNKNOWN').trim().toUpperCase();
-    return `${stage}::${program}::${batch}`;
-  }));
-  return actionableBatchKeys.size;
+    const key = `${stage}::${program}::${batch}`;
+    if (!batchGroups.has(key)) batchGroups.set(key, { stage, program, batch, docs: [] });
+    batchGroups.get(key).docs.push(doc);
+  });
+
+  let pendingBatchCount = 0;
+  batchGroups.forEach(group => {
+    const executions = getBatchSelectionExecutionTransactions(group, group.stage);
+    const executionReturned = executions.some(tx =>
+      [tx.status, tx.verificationStatus, tx.approvalStatus, tx.submissionStatus]
+        .filter(Boolean)
+        .some(status => ['DIKEMBALIKAN', 'REVISION', 'RETURNED'].includes(String(status).trim().toUpperCase()))
+    );
+    const parentReturned = group.docs.some(doc =>
+      [doc.status, doc.verificationStatus, doc.approvalStatus, doc.submissionStatus]
+        .filter(Boolean)
+        .some(status => ['DIKEMBALIKAN', 'REVISION', 'RETURNED'].includes(String(status).trim().toUpperCase()))
+    );
+    if (executionReturned || parentReturned) {
+      pendingBatchCount += 1;
+      return;
+    }
+
+    const metrics = calculateBatchMetrics({ batchCode: group.batch, docs: group.docs }, group.stage);
+    const executionsApproved = areSelectionExecutionTransactionsApproved(executions);
+    const isFullyInspectedAndApproved = executions.length > 0 &&
+      metrics.totalInspectedPolybag > 0 && metrics.inspectedPercent >= 100 && executionsApproved;
+    if (isFullyInspectedAndApproved) return;
+
+    const hasActionableParent = group.docs.some(doc => {
+      const statuses = [doc.status, doc.verificationStatus, doc.approvalStatus, doc.submissionStatus]
+        .filter(Boolean)
+        .map(status => String(status).trim().toUpperCase());
+      const isFinal = Boolean(doc.isFinal || doc.verifiedAt) || statuses.some(status =>
+        ['DISETUJUI', 'APPROVED', 'VERIFIED', 'TERVERIFIKASI', 'DATA_TERKONFIRMASI', 'FINAL'].includes(status)
+      );
+      return !isFinal;
+    });
+    const hasPendingExecution = executions.length > 0 && !executionsApproved;
+    if (hasActionableParent || hasPendingExecution) pendingBatchCount += 1;
+  });
+
+  return pendingBatchCount;
 }
 
 export function setActiveFilterProgram(prog) {
@@ -591,6 +626,7 @@ export function renderInspectionLanding() {
       statusColor,
       statusBorder,
       relatedInspections,
+      workerPremiumSummary: aggregateOkulasiWorkerPremium(relatedInspections, btx.type),
       inspectionsCount: relatedInspections.length
     };
   });
@@ -1256,7 +1292,7 @@ function renderOkulasiInspectionSection(items, graftingCount, regraftingCount, i
     ${items.length > 0 ? `
       <div id="insp-cards-container" data-inspection-list-container="OKULASI" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
         ${items.map((item, idx) => {
-          const workers = item.workers || [];
+          const workers = item.workerPremiumSummary || [];
           return `
             <div class="card-inspection-wrapper" data-inspection-list-card="OKULASI" data-type="${item.isRegrafting ? 'REGRAFTING' : 'GRAFTING'}" data-kind="${item.isRegrafting ? 'REGRAFTING' : 'GRAFTING'}" data-program="${esc(item.programCode || item.programId || '')}" data-state="${item.sisaBelumDiperiksa <= 0 ? 'DONE' : (item.totalDiperiksa > 0 ? 'IN_PROGRESS' : 'PENDING')}" data-batch="${esc(item.batchNo || '')}" data-date="${esc(normalizeDateStr(item.tanggal || item.createdAt) || '')}" data-search="${esc([item.batchNo, item.docNo, item.sourceDocNo, item.regraftPoolDocNo, item.bedengan, item.klonEntres, item.programCode, ...(Array.isArray(item.workers) ? item.workers.flatMap(worker => [worker.name, worker.code]) : [])].filter(Boolean).join(' '))}" style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); box-sizing: border-box;">
               
@@ -1380,16 +1416,31 @@ function renderOkulasiInspectionSection(items, graftingCount, regraftingCount, i
                 </div>
 
                 <!-- PEKERJA OKULASI -->
-                ${workers.length > 0 ? `
+                ${item.inspectionsCount > 0 ? `
                   <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #D1D5DB;">
-                    <div style="font-weight: 700; color: #374151; margin-bottom: 6px; font-size: 0.74rem;">Pekerja Okulasi:</div>
-                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
+                      <div style="font-weight:700;color:#374151;font-size:.74rem;">Pekerja Okulasi</div>
+                      <div style="font-size:.64rem;color:#64748B;">${workers.length} pekerja</div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px;">
                       ${workers.map(w => `
-                        <div style="display: flex; justify-content: space-between; align-items: center; color: #4B5563;">
-                          <span>• ${w.name} <span style="color: #9CA3AF;">(${w.code})</span></span>
-                          <span style="font-weight: 700; color: #116834; text-align: right;">${w.qty || 0} Pkk</span>
+                        <div style="padding:8px 9px;border:1px solid #E2E8F0;border-radius:7px;background:#FFFFFF;color:#334155;">
+                          <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;">
+                            <div style="min-width:0;">
+                              <div style="font-size:.73rem;font-weight:700;color:#1E293B;line-height:1.3;overflow-wrap:anywhere;">${esc(w.name)}</div>
+                              <div style="font-size:.64rem;color:#64748B;margin-top:2px;">NIK: ${esc(w.code || '-')}</div>
+                            </div>
+                            <div style="text-align:right;white-space:nowrap;">
+                              <div style="font-size:.61rem;color:#64748B;margin-bottom:2px;">Berhasil</div>
+                              <div style="font-size:.73rem;font-weight:700;color:#1E293B;">${w.successfulQty.toLocaleString('id-ID')} Pkk</div>
+                            </div>
+                          </div>
+                          ${w.approvedRecords || w.estimatedRecords ? `<div style="display:flex;flex-direction:column;gap:3px;margin-top:7px;padding-top:6px;border-top:1px solid #F1F5F9;font-size:.67rem;">
+                            ${w.approvedRecords ? `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;color:#116834;"><span>Premi Disetujui</span><strong style="white-space:nowrap;">${formatRupiah(w.approvedPremium)}</strong></div>` : ''}
+                            ${w.estimatedRecords ? `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;color:#9A6700;"><span>Estimasi Premi</span><strong style="white-space:nowrap;">${formatRupiah(w.estimatedPremium)}</strong></div>` : ''}
+                          </div>` : ''}
                         </div>
-                      `).join('')}
+                      `).join('') || '<div style="font-size:.7rem;color:#6B7280;">Hasil pemeriksaan per pekerja belum tersedia.</div>'}
                     </div>
                   </div>
                 ` : ''}
@@ -2250,27 +2301,22 @@ export function hasActionablePreGraftingInspection(currentUser = null) {
     const activePreGraftingDocs = filterSelectionByScope(rawPreGraftingDocs, userCtx).filter(d => !d.isSplit && !d.isLegacyAggregateSplit);
     if (!activePreGraftingDocs || activePreGraftingDocs.length === 0) return false;
 
-    // 1. Cek apakah ada dokumen batch pra-okulasi yang belum selesai atau masih ada sisa polybag belum diperiksa
-    const hasUnfinishedBatch = activePreGraftingDocs.some(d => {
-      const isApprovedFinal = (d.status === 'DISETUJUI' || d.status === 'VERIFIED') && Boolean(d.isFinal);
-      const hasRemainingPolybag = d.remainingPolybagQty !== undefined ? d.remainingPolybagQty > 0 : true;
-      return !isApprovedFinal && hasRemainingPolybag && !d.isCompleted;
-    });
-    if (hasUnfinishedBatch) return true;
+    // Gunakan agregasi Batch yang sama dengan badge tab: dokumen induk adalah
+    // referensi, sedangkan kelengkapan dan approval dibuktikan oleh transaksi.
+    if (countPendingPreGraftingDocuments(activePreGraftingDocs) > 0) return true;
 
-    // 2. Cek apakah ada transaksi pelaksanaan fisik yang dikembalikan (REVISION/DIKEMBALIKAN)
+    // Dokumen/eksekusi yang benar-benar dikembalikan tetap membutuhkan tindakan.
+    // returnReason historis saja tidak cukup karena alasan lama dapat tersimpan
+    // setelah koreksi selesai dan transaksi kembali disetujui.
     const rawAllTxs = storage.get(SELECTION_STORAGE_KEY, []);
     const authorizedAllTxs = getAuthorizedTransactions(rawAllTxs, userCtx);
-    const hasReturnedPreGrafting = authorizedAllTxs.some(tx => 
-      (tx.status === 'DIKEMBALIKAN' || tx.verificationStatus === 'DIKEMBALIKAN' || tx.status === 'REVISION' || tx.returnReason || tx.lastReturnReason) &&
+    const hasReturnedPreGrafting = authorizedAllTxs.some(tx =>
+      selectionDocumentRequiresCorrection(tx) &&
       (tx.selectionStage === 'SELEKSI_I' || tx.selectionStage === 'SELEKSI_II' || tx.selectionStage === 'SELEKSI_III' ||
        tx.selectionStage === 'SELEKSI_1' || tx.selectionStage === 'SELEKSI_2' || tx.selectionStage === 'SELEKSI_3' ||
        (tx.transactionType && String(tx.transactionType).startsWith('PELAKSANAAN_SELEKSI')))
     );
-    if (hasReturnedPreGrafting) return true;
-
-    // 3. Fallback: Jika ada dokumen aktif yang belum berstatus final disetujui
-    return activePreGraftingDocs.some(d => !d.isFinal || (d.status !== 'DISETUJUI' && d.status !== 'VERIFIED'));
+    return hasReturnedPreGrafting;
   } catch (err) {
     console.warn('[hasActionablePreGraftingInspection] Gagal:', err);
     return false;
